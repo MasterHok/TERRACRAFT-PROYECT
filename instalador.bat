@@ -64,6 +64,15 @@ echo.
 timeout /t 1 >nul
 
 :: ============================================================
+:: AVISO DE ARQUITECTURA (ARM)
+:: ============================================================
+if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
+    echo AVISO: Este launcher esta pensado para Windows x64.
+    echo En ARM puede que Java x64 no funcione correctamente.
+    echo.
+)
+
+:: ============================================================
 :: 0/5 - COMPROBAR TERRACRAFT.py
 :: ============================================================
 if not exist "%BASE%TERRACRAFT.py" (
@@ -144,15 +153,28 @@ if errorlevel 1 (
     echo AVISO: No se pudo actualizar pip. Continuando...
 )
 
-%PYTHON% -m pip install pyside6 minecraft-launcher-lib pillow skinpy
+echo Instalando dependencias basicas...
+%PYTHON% -m pip install pyside6 minecraft-launcher-lib pillow
 
 if errorlevel 1 (
     echo.
-    echo ERROR: No se pudieron instalar las dependencias.
+    echo ERROR: No se pudieron instalar las dependencias basicas.
     echo Comprueba tu conexion a Internet e intentalo de nuevo.
     echo.
     pause
     exit /b 1
+)
+
+echo.
+echo Instalando skinpy (opcional, para render 3D de skins)...
+%PYTHON% -m pip install skinpy
+
+if errorlevel 1 (
+    echo.
+    echo AVISO: No se pudo instalar skinpy.
+    echo La previsualizacion 3D de skins no funcionara,
+    echo pero el launcher seguira siendo usable.
+    echo.
 )
 
 echo.
@@ -169,17 +191,60 @@ echo.
 if not exist "%BASE%assets\" (
     echo AVISO: No se encuentra la carpeta assets\
     echo Creando assets\ vacia...
-    mkdir "%BASE%assets" 2>nul
+    mkdir "%BASE%assets"
+    if errorlevel 1 (
+        echo ERROR: No se pudo crear la carpeta assets.
+        echo Comprueba los permisos de la carpeta.
+        echo.
+        pause
+        exit /b 1
+    )
 )
 
+:: --- Assets del launcher principal ---
 if not exist "%BASE%assets\fondo.gif" (
-    echo AVISO: Falta assets\fondo.gif ^(fondo animado^)
+    echo AVISO: Falta assets\fondo.gif ^(fondo animado del launcher^)
 )
 if not exist "%BASE%assets\music.mp3" (
     echo AVISO: Falta assets\music.mp3 ^(musica de fondo^)
 )
-if not exist "%BASE%assets\icon.png" (
-    echo AVISO: Falta assets\icon.png ^(icono de la ventana^)
+if not exist "%BASE%assets\icon.ico" (
+    if not exist "%BASE%assets\icon.png" (
+        echo AVISO: Falta assets\icon.ico y assets\icon.png ^(icono de la ventana^)
+    )
+)
+
+:: --- Assets del dialogo de bienvenida ---
+if not exist "%BASE%assets\fondo_info.gif" (
+    if not exist "%BASE%assets\fondo_info.png" (
+        echo AVISO: Falta assets\fondo_info.gif ^(fondo del dialogo de bienvenida^)
+    )
+)
+if not exist "%BASE%assets\click_yes.wav" (
+    echo AVISO: Falta assets\click_yes.wav ^(sonido boton Si^)
+)
+if not exist "%BASE%assets\click_no.wav" (
+    echo AVISO: Falta assets\click_no.wav ^(sonido boton No^)
+)
+if not exist "%BASE%assets\dialog_intro.wav" (
+    echo AVISO: Falta assets\dialog_intro.wav ^(narracion del dialogo^)
+)
+
+:: --- Assets de la interfaz ---
+if not exist "%BASE%assets\banner.png" (
+    echo AVISO: Falta assets\banner.png ^(banner superior^)
+)
+if not exist "%BASE%assets\web.png" (
+    echo AVISO: Falta assets\web.png ^(icono web^)
+)
+if not exist "%BASE%assets\github.png" (
+    echo AVISO: Falta assets\github.png ^(icono GitHub^)
+)
+if not exist "%BASE%assets\discord.png" (
+    echo AVISO: Falta assets\discord.png ^(icono Discord^)
+)
+if not exist "%BASE%assets\author.png" (
+    echo AVISO: Falta assets\author.png ^(foto del creador^)
 )
 
 :: Generar icon.ico a partir de icon.png si no existe
@@ -192,6 +257,9 @@ if not exist "%BASE%assets\icon.ico" (
         ) else (
             echo OK - icon.ico generado.
         )
+    ) else (
+        echo AVISO: No hay icon.png, no se puede generar icon.ico.
+        echo La compilacion del .exe se hara sin icono personalizado.
     )
 )
 
@@ -211,7 +279,7 @@ if exist "%BASE%LANZADOR_PYTHON.bat" del "%BASE%LANZADOR_PYTHON.bat"
 echo @echo off>> "%BASE%LANZADOR_PYTHON.bat"
 echo title TERRACRAFT>> "%BASE%LANZADOR_PYTHON.bat"
 echo cd /d "%%%%~dp0">> "%BASE%LANZADOR_PYTHON.bat"
-echo python3 TERRACRAFT.py>> "%BASE%LANZADOR_PYTHON.bat"
+echo %PYTHON% TERRACRAFT.py>> "%BASE%LANZADOR_PYTHON.bat"
 echo pause>> "%BASE%LANZADOR_PYTHON.bat"
 
 if not exist "%BASE%LANZADOR_PYTHON.bat" (
@@ -232,6 +300,7 @@ echo.
 if exist "%BASE%CREAR_UN_EXE.bat" del "%BASE%CREAR_UN_EXE.bat"
 
 echo @echo off>> "%BASE%CREAR_UN_EXE.bat"
+echo setlocal enabledelayedexpansion>> "%BASE%CREAR_UN_EXE.bat"
 echo title COMPILAR TERRACRAFT>> "%BASE%CREAR_UN_EXE.bat"
 echo cd /d "%%%%~dp0">> "%BASE%CREAR_UN_EXE.bat"
 echo.>> "%BASE%CREAR_UN_EXE.bat"
@@ -240,7 +309,7 @@ echo echo   COMPILANDO TERRACRAFT>> "%BASE%CREAR_UN_EXE.bat"
 echo echo ========================================>> "%BASE%CREAR_UN_EXE.bat"
 echo echo.>> "%BASE%CREAR_UN_EXE.bat"
 echo echo Instalando PyInstaller...>> "%BASE%CREAR_UN_EXE.bat"
-echo python -m pip install pyinstaller>> "%BASE%CREAR_UN_EXE.bat"
+echo %PYTHON% -m pip install pyinstaller>> "%BASE%CREAR_UN_EXE.bat"
 echo.>> "%BASE%CREAR_UN_EXE.bat"
 echo if errorlevel 1 ^(>> "%BASE%CREAR_UN_EXE.bat"
 echo     echo ERROR: No se pudo instalar PyInstaller.>> "%BASE%CREAR_UN_EXE.bat"
@@ -249,10 +318,16 @@ echo     exit /b 1>> "%BASE%CREAR_UN_EXE.bat"
 echo ^)>> "%BASE%CREAR_UN_EXE.bat"
 echo.>> "%BASE%CREAR_UN_EXE.bat"
 echo echo.>> "%BASE%CREAR_UN_EXE.bat"
+echo echo Detectando icono...>> "%BASE%CREAR_UN_EXE.bat"
+echo echo.>> "%BASE%CREAR_UN_EXE.bat"
+echo.>> "%BASE%CREAR_UN_EXE.bat"
+echo set "ICON_OPT=">> "%BASE%CREAR_UN_EXE.bat"
+echo if exist assets\icon.ico set "ICON_OPT=--icon assets\icon.ico">> "%BASE%CREAR_UN_EXE.bat"
+echo.>> "%BASE%CREAR_UN_EXE.bat"
 echo echo Compilando con PyInstaller...>> "%BASE%CREAR_UN_EXE.bat"
 echo echo.>> "%BASE%CREAR_UN_EXE.bat"
 echo.>> "%BASE%CREAR_UN_EXE.bat"
-echo python3 -m PyInstaller --onefile --windowed --clean --icon assets\icon.ico --add-data "assets;assets" --distpath "TERRALAUNCHER" --name TERRACRAFT TERRACRAFT.py>> "%BASE%CREAR_UN_EXE.bat"
+echo %PYTHON% -m PyInstaller --onefile --windowed --clean %%ICON_OPT%% --add-data "assets;assets" --distpath "TERRALAUNCHER" --name TERRACRAFT TERRACRAFT.py>> "%BASE%CREAR_UN_EXE.bat"
 echo.>> "%BASE%CREAR_UN_EXE.bat"
 echo if errorlevel 1 ^(>> "%BASE%CREAR_UN_EXE.bat"
 echo     echo ERROR: La compilacion fallo.>> "%BASE%CREAR_UN_EXE.bat"
@@ -273,6 +348,7 @@ echo echo   - assets\    ^(fondo, musica, icono^)>> "%BASE%CREAR_UN_EXE.bat"
 echo echo   - la carpeta del launcher ^(para config\, minecraft\, server\, java\^)>> "%BASE%CREAR_UN_EXE.bat"
 echo echo.>> "%BASE%CREAR_UN_EXE.bat"
 echo pause>> "%BASE%CREAR_UN_EXE.bat"
+echo endlocal>> "%BASE%CREAR_UN_EXE.bat"
 
 if not exist "%BASE%CREAR_UN_EXE.bat" (
     echo ERROR: No se pudo crear CREAR_UN_EXE.bat
@@ -306,6 +382,10 @@ echo   - Java se descarga automaticamente desde el launcher
 echo     cuando instales un servidor.
 echo   - Purpur y Geyser/Floodgate tambien se descargan
 echo     desde el launcher en la pestana "Servidor".
+echo   - La API Key de MineSkin es OPCIONAL. Si quieres
+echo     subir skins desde el juego con SkinsRestorer,
+echo     consigue una gratis en https://mineskin.org/apikey
+echo     y pegala en la pestana "Skins de Purpur".
 echo.
 pause
 endlocal

@@ -29,7 +29,6 @@ from PySide6.QtGui import (
     QIcon, QMovie, QPainter, QColor, QLinearGradient, QTextCursor, QPixmap,
     QDesktopServices
 )
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 import minecraft_launcher_lib
 
@@ -39,8 +38,48 @@ import minecraft_launcher_lib
 # ============================================================
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 LAUNCHER_NAME = "TERRARIANOS LAUNCHER"
-LAUNCHER_VERSION = "3.1"
+LAUNCHER_VERSION = "3.2"
 LAUNCHER_AUTHOR = "Sailor_Rei_Zora_Covennant_Cock_Master_64."
+
+# ============================================================
+# LISTAS FALLBACK DE VERSIONES (por si nunca hubo caché)
+# ============================================================
+PURPUR_FALLBACK = [
+    "1.21.4", "1.21.3", "1.21.1", "1.21",
+    "1.20.6", "1.20.5", "1.20.4", "1.20.2", "1.20.1", "1.20",
+    "1.19.4", "1.19.3", "1.19.2", "1.19",
+    "1.18.2", "1.18.1", "1.18",
+    "1.17.1", "1.17",
+    "1.16.5", "1.16.4", "1.16.3", "1.16.2", "1.16.1",
+    "1.15.2", "1.15.1",
+    "1.14.4",
+]
+
+VANILLA_FALLBACK = [
+    "1.21.4", "1.21.3", "1.21.2", "1.21.1", "1.21",
+    "1.20.6", "1.20.5", "1.20.4", "1.20.3", "1.20.2", "1.20.1", "1.20",
+    "1.19.4", "1.19.3", "1.19.2", "1.19.1", "1.19",
+    "1.18.2", "1.18.1", "1.18",
+    "1.17.1", "1.17",
+    "1.16.5", "1.16.4", "1.16.3", "1.16.2", "1.16.1", "1.16",
+    "1.15.2", "1.15.1", "1.15",
+    "1.14.4", "1.14.3", "1.14.2", "1.14.1", "1.14",
+    "1.13.2", "1.13.1", "1.13",
+    "1.12.2", "1.12.1", "1.12",
+    "1.11.2", "1.11.1", "1.11",
+    "1.10.2", "1.10.1", "1.10",
+    "1.9.4", "1.9.3", "1.9.2", "1.9.1", "1.9",
+    "1.8.9", "1.8.8", "1.8.7", "1.8.6", "1.8.5", "1.8.4",
+    "1.8.3", "1.8.2", "1.8.1", "1.8",
+    "1.7.10", "1.7.9", "1.7.8", "1.7.7", "1.7.6", "1.7.5",
+    "1.7.4", "1.7.3", "1.7.2",
+    "1.6.4", "1.6.2", "1.6.1",
+]
+
+CLIENT_FALLBACK = VANILLA_FALLBACK  # el cliente usa las mismas que Vanilla
+
+# Cada cuántos días se refresca la caché consultando la API
+CACHE_MAX_AGE_DAYS = 7
 
 # Tabla Java ↔ Minecraft (según la wiki oficial)
 JAVA_BY_MC = {
@@ -214,6 +253,55 @@ class JavaDownloadThread(QThread):
             http_download(url, zip_path, reporthook=hook)
             self.progress_updated.emit(78)
 
+            # --- Verificación SHA-256 ---
+            self.status_updated.emit(f"🔍 Verificando integridad de Java {version}...")
+            try:
+                import hashlib
+                
+                # 1. Descargar el checksum oficial (es un archivo de texto pequeño)
+                checksum_url = f"{url}.sha256.txt"
+                req = urllib.request.Request(checksum_url, headers={"User-Agent": USER_AGENT})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    checksum_content = r.read().decode().strip()
+                
+                # El archivo suele tener el formato: "hash  nombre_archivo.zip"
+                # Extraemos solo el hash (la primera parte)
+                expected_hash = checksum_content.split()[0]
+                
+                # 2. Calcular el hash del archivo descargado
+                h = hashlib.sha256()
+                with open(zip_path, "rb") as f:
+                    while True:
+                        chunk = f.read(65536)
+                        if not chunk:
+                            break
+                        h.update(chunk)
+                actual_hash = h.hexdigest()
+                
+                # 3. Comparar (ignorando mayúsculas/minúsculas por seguridad)
+                if actual_hash.lower() != expected_hash.lower():
+                    raise Exception(
+                        f"Verificación SHA-256 fallida.\n"
+                        f"Esperado: {expected_hash}\n"
+                        f"Obtenido: {actual_hash}"
+                    )
+                
+                self.status_updated.emit(f"✅ SHA-256 verificado: {actual_hash[:16]}...")
+                
+            except Exception as ve:
+                if "Verificación SHA-256 fallida" in str(ve):
+                    self.status_updated.emit(f"⚠️ {ve}")
+                    # Borrar el archivo corrupto/manipulado
+                    try:
+                        os.remove(zip_path)
+                    except Exception:
+                        pass
+                    self.finished.emit(False, f"Verificación fallida: {ve}")
+                    return
+                # Si falla la descarga del checksum (ej. sin internet), avisar pero continuar
+                self.status_updated.emit(f"ℹ️ No se pudo verificar el hash de Java: {ve}")
+            # --- Fin verificación SHA-256 ---
+
             self.status_updated.emit(f"📦 Extrayendo Java {version}...")
             if os.path.exists(dest_dir):
                 try:
@@ -293,6 +381,69 @@ class ServerDownloadThread(QThread):
             if not os.path.exists(jar_path):
                 raise Exception("El archivo Purpur no se descargó")
 
+            # VERIFICACIÓN MD5 (obteniendo hash del JSON de Purpur)
+            self.log_message.emit("🔍 Verificando integridad del archivo...")
+            try:
+                import hashlib
+
+                # La API de Purpur expone el MD5 en el JSON de la versión
+                info_url = f"https://api.purpurmc.org/v2/purpur/{self.version}"
+                req = urllib.request.Request(
+                    info_url, headers={"User-Agent": USER_AGENT}
+                )
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    data = json.loads(r.read().decode())
+
+                # El MD5 está en data["builds"]["latest"] o similar
+                # Estructura real: {"builds": {"latest": "1234", "all": [...]}, ...}
+                # El hash hay que pedirlo al endpoint del build concreto
+                latest_build = data.get("builds", {}).get("latest", "")
+                if latest_build:
+                    hash_url = (
+                        f"https://api.purpurmc.org/v2/purpur/{self.version}/"
+                        f"{latest_build}"
+                    )
+                    req = urllib.request.Request(
+                        hash_url, headers={"User-Agent": USER_AGENT}
+                    )
+                    with urllib.request.urlopen(req, timeout=10) as r:
+                        build_data = json.loads(r.read().decode())
+                    expected_md5 = build_data.get("md5", "")
+                else:
+                    expected_md5 = ""
+
+                if not expected_md5:
+                    self.log_message.emit("ℹ️ La API no devolvió hash. Saltando verificación.")
+                else:
+                    h = hashlib.md5()
+                    with open(jar_path, "rb") as f:
+                        while True:
+                            chunk = f.read(65536)
+                            if not chunk:
+                                break
+                            h.update(chunk)
+                    actual_md5 = h.hexdigest()
+
+                    if actual_md5.lower() != expected_md5.lower():
+                        raise Exception(
+                            f"Verificación MD5 fallida.\n"
+                            f"Esperado: {expected_md5}\n"
+                            f"Obtenido: {actual_md5}"
+                        )
+                    self.log_message.emit(f"✅ MD5 verificado: {actual_md5[:16]}...")
+
+            except Exception as ve:
+                if "Verificación MD5 fallida" in str(ve):
+                    self.log_message.emit(f"⚠️ {ve}")
+                    try:
+                        os.remove(jar_path)
+                    except Exception:
+                        pass
+                    self.finished.emit(False, f"Verificación fallida: {ve}")
+                    return
+                self.log_message.emit(f"ℹ️ No se pudo verificar el hash: {ve}")
+            # ═══════════════════════════════════════════════════════
+
             self.log_message.emit(f"✅ Purpur {self.version} descargado")
 
             with open(os.path.join(self.server_dir, "eula.txt"), "w") as f:
@@ -304,43 +455,11 @@ class ServerDownloadThread(QThread):
                     f.write("enable-command-block=true\n")
                     f.write("spawn-protection=0\n")
                     f.write(f"motd=Servidor Purpur {self.version}\n")
-                    f.write("online-mode=false\n")
+                    f.write("online-mode=true\n")
                     f.write("allow-flight=true\n")
                     f.write("view-distance=16\n")
                     f.write("max-players=20\n")
                     f.write("enforce-secure-profile=false\n")     
-
-            vainilla_dir = os.path.join(self.server_dir, "vainilla")
-            os.makedirs(vainilla_dir, exist_ok=True)
-
-            props_path = os.path.join(vainilla_dir, "server.properties")
-
-            if os.path.exists(props_path):
-                cambios = {
-                    "max-players": "20",
-                    "motd": f"Servidor Vanilla {self.version}",
-                    "spawn-protection": "0",
-                    "enable-command-block": "true",
-                    "online-mode": "false",
-                    "allow-flight": "true",
-                    "view-distance": "16",
-                    "simulation-distance": "16",
-                    "enforce-secure-profile": "false",
-                }
-
-                with open(props_path, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-
-                with open(props_path, "w", encoding="utf-8") as f:
-                    for line in lines:
-                        if "=" in line and not line.startswith("#"):
-                            clave = line.split("=", 1)[0]
-
-                            if clave in cambios:
-                                f.write(f"{clave}={cambios[clave]}\n")
-                                continue
-
-                        f.write(line)
 
             self.status_updated.emit("📥 Descargando Geyser + Floodgate...")
             self.progress_updated.emit(72)
@@ -379,7 +498,7 @@ class VanillaDownloadThread(QThread):
             self.status_updated.emit(f"📥 Consultando manifiesto de Mojang...")
             self.progress_updated.emit(2)
 
-            # 1. Obtener manifiesto (con User-Agent completo)
+            # 1. Obtener manifiesto
             req = urllib.request.Request(
                 "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
                 headers={"User-Agent": USER_AGENT},
@@ -399,8 +518,7 @@ class VanillaDownloadThread(QThread):
 
             # 2. Obtener URL de descarga del servidor
             req = urllib.request.Request(
-                target["url"],
-                headers={"User-Agent": USER_AGENT},
+                target["url"], headers={"User-Agent": USER_AGENT},
             )
             with urllib.request.urlopen(req, timeout=15) as r:
                 version_data = json.loads(r.read().decode())
@@ -418,9 +536,11 @@ class VanillaDownloadThread(QThread):
             self.log_message.emit(f"✅ URL obtenida: {server_url}")
             self.progress_updated.emit(10)
 
-            # 3. Descargar
-            self.status_updated.emit(f"📥 Descargando Vanilla {self.version}...")
+            # 3. DEFINIR jar_path ANTES de la descarga ← ¡IMPORTANTE!
             jar_path = os.path.join(self.server_dir, f"vanilla-{self.version}.jar")
+
+            # 4. Descargar
+            self.status_updated.emit(f"📥 Descargando Vanilla {self.version}...")
 
             def hook(downloaded, total):
                 if total > 0:
@@ -428,8 +548,7 @@ class VanillaDownloadThread(QThread):
                     self.progress_updated.emit(10 + int(percent * 0.8))
 
             req = urllib.request.Request(
-                server_url,
-                headers={"User-Agent": USER_AGENT},
+                server_url, headers={"User-Agent": USER_AGENT},
             )
             with urllib.request.urlopen(req, timeout=120) as r:
                 total = int(r.headers.get("Content-Length", 0))
@@ -445,20 +564,54 @@ class VanillaDownloadThread(QThread):
                             hook(downloaded, total)
 
             self.log_message.emit(f"✅ Descargado: {jar_path}")
+            self.progress_updated.emit(85)
+
+            # 5. Verificación SHA1 ← ahora sí, jar_path existe
+            self.log_message.emit("🔍 Verificando integridad del archivo...")
+            try:
+                import hashlib
+                h = hashlib.sha1()
+                with open(jar_path, "rb") as f:
+                    while True:
+                        chunk = f.read(65536)
+                        if not chunk:
+                            break
+                        h.update(chunk)
+                actual_sha1 = h.hexdigest()
+
+                if expected_sha1 and actual_sha1.lower() != expected_sha1.lower():
+                    raise Exception(
+                        f"Verificación SHA1 fallida.\n"
+                        f"Esperado: {expected_sha1}\n"
+                        f"Obtenido: {actual_sha1}"
+                    )
+                self.log_message.emit(f"✅ SHA1 verificado: {actual_sha1[:16]}...")
+
+            except Exception as ve:
+                if "Verificación SHA1 fallida" in str(ve):
+                    self.log_message.emit(f"⚠️ {ve}")
+                    try:
+                        os.remove(jar_path)
+                    except Exception:
+                        pass
+                    self.finished_download.emit(False, f"Verificación fallida: {ve}")
+                    return
+                self.log_message.emit(f"ℹ️ No se pudo verificar el hash: {ve}")
+
             self.progress_updated.emit(92)
 
-            # 4. eula.txt
+            # 6. eula.txt
             with open(os.path.join(self.server_dir, "eula.txt"), "w") as f:
                 f.write("eula=true\n")
 
-            # 5. server.properties (si no existe)
+            # 7. server.properties (si no existe)
             props_path = os.path.join(self.server_dir, "server.properties")
             if not os.path.exists(props_path):
                 with open(props_path, "w") as f:
                     f.write("enable-command-block=true\n")
                     f.write("spawn-protection=0\n")
                     f.write(f"motd=Servidor Vanilla {self.version}\n")
-                    f.write("online-mode=false\n")
+                    f.write("online-mode=true\n")
                     f.write("allow-flight=true\n")
                     f.write("view-distance=16\n")
                     f.write("max-players=20\n")
@@ -630,97 +783,6 @@ class ProcessWatcherTask(QRunnable):
         self.signals.finished.emit()
 
 # ============================================================
-# HILO: subir skin a Catbox (con diagnóstico)
-# ============================================================
-class SkinUploadThread(QThread):
-    finished_upload = Signal(str, str)  # url, error_msg
-
-    def __init__(self, ruta_local, userhash=""):
-        super().__init__()
-        self.ruta_local = ruta_local
-        self.userhash = userhash
-
-    def run(self):
-        print(f"[Skin] === Iniciando subida de: {self.ruta_local}")
-        try:
-            import uuid
-
-            if not os.path.exists(self.ruta_local):
-                print(f"[Skin] ERROR: archivo no existe")
-                self.finished_upload.emit("", "El archivo no existe")
-                return
-
-            size = os.path.getsize(self.ruta_local)
-            print(f"[Skin] Tamaño del archivo: {size} bytes")
-
-            with open(self.ruta_local, "rb") as f:
-                file_data = f.read()
-
-            print(f"[Skin] Archivo leído: {len(file_data)} bytes")
-
-            boundary = "----TerraCraftBoundary" + uuid.uuid4().hex
-
-            body = b""
-
-            body += f"--{boundary}\r\n".encode()
-            body += b'Content-Disposition: form-data; name="reqtype"\r\n\r\n'
-            body += b"fileupload\r\n"
-
-            if self.userhash:
-                body += f"--{boundary}\r\n".encode()
-                body += b'Content-Disposition: form-data; name="userhash"\r\n\r\n'
-                body += f"{self.userhash}\r\n".encode()
-
-            filename = os.path.basename(self.ruta_local)
-            body += f"--{boundary}\r\n".encode()
-            body += (
-                f'Content-Disposition: form-data; name="fileToUpload"; '
-                f'filename="{filename}"\r\n'
-            ).encode()
-            body += b"Content-Type: image/png\r\n\r\n"
-            body += file_data + b"\r\n"
-            body += f"--{boundary}--\r\n".encode()
-
-            print(f"[Skin] Body construido: {len(body)} bytes")
-
-            req = urllib.request.Request(
-                "https://catbox.moe/user/api.php",
-                data=body,
-                headers={
-                    "Content-Type": f"multipart/form-data; boundary={boundary}",
-                    "User-Agent": USER_AGENT,
-                },
-            )
-
-            print(f"[Skin] Enviando petición a Catbox...")
-
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                response_text = resp.read().decode().strip()
-
-            print(f"[Skin] Respuesta: {response_text[:200]}")
-
-            if response_text.startswith("https://"):
-                self.finished_upload.emit(response_text, "")
-            else:
-                self.finished_upload.emit("", f"Respuesta inesperada: {response_text[:200]}")
-
-        except urllib.error.HTTPError as e:
-            try:
-                err_body = e.read().decode()[:300]
-            except Exception:
-                err_body = "(sin cuerpo)"
-            print(f"[Skin] HTTPError {e.code}: {err_body}")
-            self.finished_upload.emit("", f"HTTP {e.code}: {err_body}")
-        except urllib.error.URLError as e:
-            print(f"[Skin] URLError: {e.reason}")
-            self.finished_upload.emit("", f"Error de red: {e.reason}")
-        except Exception as e:
-            import traceback
-            print(f"[Skin] Exception: {type(e).__name__}: {e}")
-            traceback.print_exc()
-            self.finished_upload.emit("", f"Error: {type(e).__name__}: {e}")
-
-# ============================================================
 # HILO: descargar bytes de una skin desde una URL
 # ============================================================
 class SkinFetchThread(QThread):
@@ -839,6 +901,59 @@ class BackgroundMusic(QObject):
         else:
             self.player.play()
             self.is_playing = True
+
+# ============================================================
+# FONDO ANIMADO PARA EL DIÁLOGO
+# ============================================================
+class AnimatedBackgroundDialog(QWidget):
+    """Widget con GIF animado de fondo para el diálogo de bienvenida."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.movie = None
+
+        gif_path = resource_path(os.path.join("assets", "fondo_info.gif"))
+        if not os.path.exists(gif_path):
+            gif_path = resource_path(os.path.join("assets", "fondo_info.png"))
+
+        if os.path.exists(gif_path) and gif_path.endswith(".gif"):
+            self.movie = QMovie(gif_path)
+            self.movie.setCacheMode(QMovie.CacheAll)
+            self.movie.setScaledSize(self.size())
+            self.movie.frameChanged.connect(self.update)
+            self.movie.start()
+        self._static_pixmap = None
+        if os.path.exists(gif_path) and not gif_path.endswith(".gif"):
+            self._static_pixmap = QPixmap(gif_path)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+
+        if self.movie and self.movie.currentPixmap():
+            scaled = self.movie.currentPixmap().scaled(
+                self.size(), Qt.KeepAspectRatioByExpanding,
+                Qt.SmoothTransformation
+            )
+            painter.drawPixmap(0, 0, scaled)
+        elif self._static_pixmap and not self._static_pixmap.isNull():
+            scaled = self._static_pixmap.scaled(
+                self.size(), Qt.KeepAspectRatioByExpanding,
+                Qt.SmoothTransformation
+            )
+            painter.drawPixmap(0, 0, scaled)
+        else:
+            gradient = QLinearGradient(0, 0, 0, self.height())
+            gradient.setColorAt(0, QColor(26, 26, 46))
+            gradient.setColorAt(0.5, QColor(22, 33, 62))
+            gradient.setColorAt(1, QColor(15, 52, 96))
+            painter.fillRect(self.rect(), gradient)
+
+        painter.end()
+
+    def resizeEvent(self, event):
+        if self.movie:
+            self.movie.setScaledSize(self.size())
+        super().resizeEvent(event)
 
 
 # ============================================================
@@ -999,6 +1114,13 @@ class FirstRunDialog(QDialog):
         self._sound_yes = self._load_sound("click_yes.wav")
         self._sound_no = self._load_sound("click_no.wav")
 
+        # --- Sonido de fondo al abrir el diálogo ---
+        self._sound_intro = self._load_sound("dialog_intro.wav")
+        if self._sound_intro:
+            # Reproducir 100ms después de que el diálogo se muestre,
+            # para que el usuario perciba el sonido desde el principio
+            QTimer.singleShot(100, self._sound_intro.play)
+
     def _load_sound(self, filename):
         """Carga un sonido desde assets/. Devuelve None si no existe."""
         path = resource_path(os.path.join("assets", filename))
@@ -1014,6 +1136,10 @@ class FirstRunDialog(QDialog):
             return None
 
     def _on_yes(self):
+        # Cortar la narración de fondo si está sonando
+        if self._sound_intro:
+            self._sound_intro.stop()
+
         if self._sound_yes:
             self._sound_yes.play()
             # Esperar 250ms para que suene antes de cerrar
@@ -1022,6 +1148,10 @@ class FirstRunDialog(QDialog):
             self._accept()
 
     def _on_no(self):
+        # Cortar la narración de fondo si está sonando
+        if self._sound_intro:
+            self._sound_intro.stop()
+
         if self._sound_no:
             self._sound_no.play()
             QTimer.singleShot(1050, self._reject)
@@ -1036,65 +1166,12 @@ class FirstRunDialog(QDialog):
         self.resultado = False
         self.reject()
 
-
-# ============================================================
-# FONDO ANIMADO PARA EL DIÁLOGO
-# ============================================================
-class AnimatedBackgroundDialog(QWidget):
-    """Widget con GIF animado de fondo para el diálogo de bienvenida."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.movie = None
-
-        gif_path = resource_path(os.path.join("assets", "fondo_info.gif"))
-        # Fallback a fondo_info.png si no hay GIF
-        if not os.path.exists(gif_path):
-            gif_path = resource_path(os.path.join("assets", "fondo_info.png"))
-
-        if os.path.exists(gif_path) and gif_path.endswith(".gif"):
-            self.movie = QMovie(gif_path)
-            self.movie.setCacheMode(QMovie.CacheAll)
-            self.movie.setScaledSize(self.size())
-            self.movie.frameChanged.connect(self.update)
-            self.movie.start()
-        self._static_pixmap = None
-        if os.path.exists(gif_path) and not gif_path.endswith(".gif"):
-            self._static_pixmap = QPixmap(gif_path)
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-
-        if self.movie and self.movie.currentPixmap():
-            scaled = self.movie.currentPixmap().scaled(
-                self.size(), Qt.KeepAspectRatioByExpanding,
-                Qt.SmoothTransformation
-            )
-            painter.drawPixmap(0, 0, scaled)
-        elif self._static_pixmap and not self._static_pixmap.isNull():
-            scaled = self._static_pixmap.scaled(
-                self.size(), Qt.KeepAspectRatioByExpanding,
-                Qt.SmoothTransformation
-            )
-            painter.drawPixmap(0, 0, scaled)
-        else:
-            gradient = QLinearGradient(0, 0, 0, self.height())
-            gradient.setColorAt(0, QColor(26, 26, 46))
-            gradient.setColorAt(0.5, QColor(22, 33, 62))
-            gradient.setColorAt(1, QColor(15, 52, 96))
-            painter.fillRect(self.rect(), gradient)
-
-        painter.end()
-
-    def resizeEvent(self, event):
-        if self.movie:
-            self.movie.setScaledSize(self.size())
-        super().resizeEvent(event)
-
 # ============================================================
 # LAUNCHER
 # ============================================================
 class TerrarianosLauncher(QMainWindow):
+    versiones_servidor_listas = Signal(str, list)   # ("Purpur"/"Vanilla", [versiones])
+    versiones_cliente_listas  = Signal(list) 
     def __init__(self):
         super().__init__()
         
@@ -1117,9 +1194,9 @@ class TerrarianosLauncher(QMainWindow):
             "ram": 8,
             "server_version": "",
             "server_ram": 4,
+            "online_mode": "", 
             "known_server_versions": [],
             "music_volume": 0.3,
-            "catbox_userhash": "",
             "my_skins": [],
             "mineskin_api_key": "",
             "accepted_downloads": False,
@@ -1148,6 +1225,9 @@ class TerrarianosLauncher(QMainWindow):
         self.current_skin_index = 0
         self._preview_threads = []
 
+        self.versiones_servidor_listas.connect(self._on_versiones_servidor_recibidas)
+        self.versiones_cliente_listas.connect(self._on_versiones_cliente_recibidas)
+
         self.init_ui()
 
         # --- Aviso de primer arranque (antes de cualquier descarga) ---
@@ -1159,9 +1239,6 @@ class TerrarianosLauncher(QMainWindow):
         self.init_background_music()
         self.check_version_installed()
         self.refresh_server_tab()
-
-        QTimer.singleShot(300, self._load_ip_once)
-        QTimer.singleShot(800, self.auto_update_geyser_on_start)
 
         self._migrate_old_server_files()
 
@@ -1221,24 +1298,19 @@ class TerrarianosLauncher(QMainWindow):
             print(f"[Migrate] Error: {e}")
 
     def closeEvent(self, event):
-        """Al cerrar el launcher, matar servidor y cliente si están corriendo."""
-        # Detener servidor si está corriendo
+        """Al cerrar el launcher, intentar cierre limpio y luego forzar."""
         if self.server_process and self.server_process.poll() is None:
             try:
                 if self.server_process.stdin:
                     self.server_process.stdin.write("stop\n")
                     self.server_process.stdin.flush()
-            except Exception:
-                pass
-            # Esperar brevemente
-            try:
+                # Dar 5 segundos para guardado
                 self.server_process.wait(timeout=5)
             except Exception:
-                self._kill_process_tree(self.server_process)
+                self._kill_process_tree(self.server_process, graceful_first=True)
 
-        # Matar cliente si está corriendo
         if self.client_process and self.client_process.poll() is None:
-            self._kill_process_tree(self.client_process)
+            self._kill_process_tree(self.client_process, graceful_first=False)
 
         event.accept()
 
@@ -1289,6 +1361,46 @@ class TerrarianosLauncher(QMainWindow):
                 json.dump(self.settings, f, indent=2)
         except Exception as e:
             print(f"Error guardando settings: {e}")
+
+    # ---------- CACHÉ DE VERSIONES ----------
+    def _versions_cache_path(self, tipo: str) -> str:
+        """Devuelve la ruta del archivo de caché para 'purpur', 'vanilla' o 'cliente'."""
+        return os.path.join(self.config_dir, f"versions_cache_{tipo}.json")
+
+    def _load_versions_cache(self, tipo: str):
+        """Carga la caché desde disco. Devuelve (versiones, timestamp) o ([], 0)."""
+        path = self._versions_cache_path(tipo)
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                versiones = data.get("versions", [])
+                ts = data.get("timestamp", 0)
+                if isinstance(versiones, list) and versiones:
+                    return versiones, ts
+        except Exception as e:
+            print(f"[Cache] Error cargando caché {tipo}: {e}")
+        return [], 0
+
+    def _save_versions_cache(self, tipo: str, versiones: list):
+        """Guarda la caché en disco con el timestamp actual."""
+        path = self._versions_cache_path(tipo)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "versions": versiones,
+                    "timestamp": time.time(),
+                }, f, indent=2)
+        except Exception as e:
+            print(f"[Cache] Error guardando caché {tipo}: {e}")
+
+    def _cache_is_fresh(self, tipo: str) -> bool:
+        """Devuelve True si la caché existe y tiene menos de CACHE_MAX_AGE_DAYS días."""
+        versiones, ts = self._load_versions_cache(tipo)
+        if not versiones:
+            return False
+        edad_dias = (time.time() - ts) / 86400
+        return edad_dias < CACHE_MAX_AGE_DAYS
 
     # ---------- MÚSICA ----------
     def init_background_music(self):
@@ -1621,6 +1733,17 @@ class TerrarianosLauncher(QMainWindow):
                 padding: 4px 8px;
             }
 
+            QComboBox QLineEdit {
+                background: transparent;
+                border: none;
+                color: #00d4ff;
+                padding: 0;
+                margin: 0;
+            }
+            QComboBox QLineEdit[readOnly="true"] {
+                color: #00d4ff;
+            }
+
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #00a8cc, stop:1 #007a99);
@@ -1801,21 +1924,32 @@ class TerrarianosLauncher(QMainWindow):
         grid = QGridLayout()
         grid.setSpacing(10)
         grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
 
+        # ─── Fila 0: Nombre | Versión + botones ───
         grid.addWidget(self._field("👤 Nombre:"), 0, 0)
+
         self.username_input = QLineEdit(self.settings["username"])
         self.username_input.textChanged.connect(self.update_settings)
         grid.addWidget(self.username_input, 0, 1)
 
-        grid.addWidget(self._field("📦 Versión:"), 1, 0)
+        grid.addWidget(self._field("📦 Versión:"), 0, 2)
 
         version_row = QHBoxLayout()
-        version_row.setSpacing(8)
+        version_row.setSpacing(6)
 
         self.version_combo = QComboBox()
         self.version_combo.setEditable(True)
         self.version_combo.currentTextChanged.connect(self.on_client_version_changed)
+        self.version_combo.setMinimumWidth(110)
+        self.version_combo.setMaximumWidth(150)
         version_row.addWidget(self.version_combo, stretch=1)
+
+        self.btn_refresh_client = QPushButton("🔄")
+        self.btn_refresh_client.setObjectName("copy_button")
+        self.btn_refresh_client.setToolTip("Buscar nuevas versiones en la API de Mojang")
+        self.btn_refresh_client.clicked.connect(self.force_refresh_client_versions)
+        version_row.addWidget(self.btn_refresh_client)
 
         self.delete_client_button = QPushButton("🗑")
         self.delete_client_button.setObjectName("delete_button")
@@ -1823,14 +1957,15 @@ class TerrarianosLauncher(QMainWindow):
         self.delete_client_button.clicked.connect(self.delete_client_version)
         version_row.addWidget(self.delete_client_button)
 
-        grid.addLayout(version_row, 1, 1)
+        grid.addLayout(version_row, 0, 3)
 
-        grid.addWidget(self._field("💾 RAM:"), 2, 0)
+        # ─── Fila 1: RAM ───
+        grid.addWidget(self._field("💾 RAM:"), 1, 0)
         self.ram_combo = QComboBox()
         self.ram_combo.addItems(["2 GB", "4 GB", "6 GB", "8 GB", "12 GB", "16 GB"])
         self.ram_combo.setCurrentText(f"{self.settings['ram']} GB")
         self.ram_combo.currentTextChanged.connect(self.update_settings)
-        grid.addWidget(self.ram_combo, 2, 1)
+        grid.addWidget(self.ram_combo, 1, 1)
 
         panel.layout().addLayout(grid)
         layout.addWidget(panel)
@@ -1881,19 +2016,17 @@ class TerrarianosLauncher(QMainWindow):
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(3, 1)
 
-        # ---- Fila 0: Servidor | Versión | 🗑 ----
+        # ---- Fila 0: Servidor | Versión + 🗑 ----
         grid.addWidget(self._field("⚙️ Servidor:"), 0, 0)
 
         self.server_type_combo = QComboBox()
         self.server_type_combo.addItems(["Purpur", "Vanilla"])
         self.server_type_combo.setCurrentText(self.settings.get("server_type", "Purpur"))
         self.server_type_combo.currentTextChanged.connect(self.on_server_type_changed)
-        self.server_type_combo.setMinimumWidth(110)
         grid.addWidget(self.server_type_combo, 0, 1)
 
         grid.addWidget(self._field("📦 Versión:"), 0, 2)
 
-        # Sub-layout horizontal: combo versión + botón eliminar
         version_row = QHBoxLayout()
         version_row.setSpacing(6)
 
@@ -1902,7 +2035,16 @@ class TerrarianosLauncher(QMainWindow):
         self.server_version_combo.setInsertPolicy(QComboBox.NoInsert)
         self.server_version_combo.lineEdit().setPlaceholderText("Versión...")
         self.server_version_combo.currentTextChanged.connect(self.on_server_version_changed)
+        self.server_version_combo.setMinimumWidth(110)
+        self.server_version_combo.setMaximumWidth(150)
+        self.server_version_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         version_row.addWidget(self.server_version_combo, stretch=1)
+
+        self.btn_refresh_server = QPushButton("🔄")
+        self.btn_refresh_server.setObjectName("copy_button")
+        self.btn_refresh_server.setToolTip("Buscar nuevas versiones en la API")
+        self.btn_refresh_server.clicked.connect(self.force_refresh_server_versions)
+        version_row.addWidget(self.btn_refresh_server)
 
         self.delete_server_button = QPushButton("🗑")
         self.delete_server_button.setObjectName("delete_button")
@@ -1918,7 +2060,7 @@ class TerrarianosLauncher(QMainWindow):
         self.java_info_label.setWordWrap(True)
         grid.addWidget(self.java_info_label, 1, 0, 1, 4)
 
-        # ---- Fila 2: RAM ----
+        # ---- Fila 2: RAM | Online-mode + ❓ ----
         grid.addWidget(self._field("💾 RAM:"), 2, 0)
         self.server_ram_combo = QComboBox()
         self.server_ram_combo.addItems(["2 GB", "4 GB", "6 GB", "8 GB", "12 GB", "16 GB"])
@@ -1926,10 +2068,43 @@ class TerrarianosLauncher(QMainWindow):
         self.server_ram_combo.currentTextChanged.connect(self.on_server_ram_changed)
         grid.addWidget(self.server_ram_combo, 2, 1)
 
+        grid.addWidget(self._field("🔒 Online-mode:"), 2, 2)
+
+        online_row = QHBoxLayout()
+        online_row.setSpacing(6)
+
+        self.online_mode_combo = QComboBox()
+        self.online_mode_combo.setEditable(True)
+        self.online_mode_combo.lineEdit().setReadOnly(True)
+        self.online_mode_combo.lineEdit().setPlaceholderText("— Elige un modo —")
+        self.online_mode_combo.addItems(["Premium", "No-Premium"])
+
+        # Arrancar sin selección (placeholder visible)
+        self.online_mode_combo.setCurrentIndex(-1)
+
+        # Si había una elección guardada, restaurarla
+        saved_mode = self.settings.get("online_mode", "")
+        if saved_mode == "True":
+            self.online_mode_combo.setCurrentText("Premium")
+        elif saved_mode == "False":
+            self.online_mode_combo.setCurrentText("No-Premium")
+
+        self.online_mode_combo.currentTextChanged.connect(self.on_online_mode_changed)
+        online_row.addWidget(self.online_mode_combo, stretch=1)
+
+        self.btn_online_help = QPushButton("❓")
+        self.btn_online_help.setObjectName("copy_button")
+        self.btn_online_help.setToolTip("¿Qué significa online-mode?")
+        self.btn_online_help.clicked.connect(self.show_online_mode_help)
+        online_row.addWidget(self.btn_online_help)
+
+        grid.addLayout(online_row, 2, 3)
+
+        # ---- Fila 3: Nota de RAM ----
         ram_note = QLabel("💡 2-5 jugadores → 4 GB · 10-20 jugadores → 8 GB")
         ram_note.setObjectName("ram_note")
         ram_note.setWordWrap(True)
-        grid.addWidget(ram_note, 2, 2, 1, 2)
+        grid.addWidget(ram_note, 3, 0, 1, 4)
 
         panel.layout().addLayout(grid)
         layout.addWidget(panel)
@@ -1957,6 +2132,56 @@ class TerrarianosLauncher(QMainWindow):
 
         self.load_server_versions()
 
+    def on_online_mode_changed(self, text):
+        """Guarda el valor de online-mode (Premium → True, No-Premium → False)."""
+        if text == "Premium":
+            self.settings["online_mode"] = "True"
+        elif text == "No-Premium":
+            self.settings["online_mode"] = "False"
+            # Aviso la primera vez que elige No-Premium
+            if not self.settings.get("warned_online_mode_false", False):
+                self.settings["warned_online_mode_false"] = True
+                QMessageBox.warning(
+                    self, "Modo No-Premium",
+                    "Has elegido No-Premium.\n\n"
+                    "• Esta opción es ideal para el propósito de este Proyecto.\n\n"
+                    "• No expongas este servidor ni tu IP a desconocidos.\n\n"
+                    "• Solo comparte los datos de conexión a personas de confianza.\n\n"
+                    "Si tienes dudas, pulsa el botón ❓."
+                )
+        else:
+            # Placeholder u otro texto → sin elección
+            self.settings["online_mode"] = ""
+
+        self.save_settings()
+        self.refresh_server_tab()
+
+    def show_online_mode_help(self):
+        """Explica qué significa online-mode y las diferencias entre True y False."""
+        QMessageBox.information(
+            self, "¿Qué es online-mode?",
+            "🔒 <b>online-mode</b><br><br>"
+            "<b>¿Qué es?</b><br>"
+            "Es el modo de autenticación del servidor con los servidores de Mojang.<br><br>"
+            "<b> PREMIUM (Recomendado para servidores públicos Premium, requiere Inicio de Sesion,)</b><br>"
+            "Si te interesa usar servidores Premium te recomiendo usar el launcher oficial si cuentas con"
+            "el Juego Comprado."
+            "• Solo jugadores con cuenta premium (comprada) pueden entrar<br>"
+            "• El servidor verifica cada conexión con Mojang<br>"
+            "• Las skins se cargan automáticamente desde Mojang<br>"
+            "• Más seguro contra suplantación de identidad<br>"
+            "• <b>Ideal para:</b> servidores abiertos al público, con amigos premium<br><br>"
+            "<b> NO-PREMIUM (Útil para servidores privados e ideal para este Proyecto)</b><br>"
+            "• Cualquier jugador puede entrar sin cuenta premium<br>"
+            "• No hay verificación con Mojang<br>"
+            "• Las skins se gestionan con plugins como SkinsRestorer<br>"
+            "• <b>Ideal para:</b> servidores LAN, con amigos que no tienen el juego comprado, "
+            "o si usas Geyser/Floodgate para crossplay con Bedrock<br><br>"
+            "<b>💡 Nota:</b><br>"
+            "El motivo de esta opcion es solo de complementar la seguridad del usuario informandole "
+            "y dejandolo escoger."
+        )
+
     def on_server_type_changed(self, server_type):
         self.settings["server_type"] = server_type
         self.save_settings()
@@ -1966,35 +2191,74 @@ class TerrarianosLauncher(QMainWindow):
         self._update_java_info_label(self.server_version_combo.currentText().strip())
 
     def load_server_versions(self):
-        """Carga versiones según el tipo de servidor seleccionado."""
+        """Carga versiones desde caché al instante y refresca en segundo plano si toca."""
+        server_type = self.server_type_combo.currentText()  # "Purpur" o "Vanilla"
+        tipo_key = server_type.lower()                       # "purpur" o "vanilla"
+
+        # 1) Mostrar lo que tengamos YA (caché o fallback)
+        versiones_cache, _ = self._load_versions_cache(tipo_key)
+
+        if versiones_cache:
+            self._populate_server_versions(versiones_cache)
+        else:
+            fallback = PURPUR_FALLBACK if server_type == "Purpur" else VANILLA_FALLBACK
+            self._populate_server_versions(fallback)
+
+        # 2) Si la caché no está fresca, refrescar en segundo plano
+        if not self._cache_is_fresh(tipo_key):
+            self._fetch_server_versions_async(server_type)
+
+    def _fetch_server_versions_async(self, server_type: str):
+        """Lanza un hilo que consulta la API y emite la señal cuando termina."""
+        tipo_key = server_type.lower()
+
+        def worker():
+            try:
+                if server_type == "Purpur":
+                    data = http_get_json("https://api.purpurmc.org/v2/purpur/", timeout=15)
+                    versiones = list(reversed(data.get("versions", [])))
+                else:  # Vanilla
+                    data = http_get_json(
+                        "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
+                        timeout=15,
+                    )
+                    versiones = [
+                        v["id"] for v in data.get("versions", [])
+                        if v.get("type") == "release"
+                    ]
+
+                if versiones:
+                    self._save_versions_cache(tipo_key, versiones)
+                    # Señal de Qt: se ejecuta en el hilo principal automáticamente
+                    self.versiones_servidor_listas.emit(server_type, versiones)
+
+            except Exception as e:
+                print(f"[Fetch] Error consultando {server_type}: {e}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def force_refresh_server_versions(self):
+        """Fuerza la consulta a la API para el tipo de servidor actual."""
         server_type = self.server_type_combo.currentText()
-        known = self.settings.get("known_server_versions", [])
+        self.btn_refresh_server.setEnabled(False)
+        self.btn_refresh_server.setText("⏳")
+        self.server_status.setText(f"🔄 Buscando versiones de {server_type}...")
 
-        if server_type == "Purpur":
-            fallback = ["1.21.11", "1.21.10", "1.21.8", "1.21.4", "1.20.6", "1.14.4"]
-            initial = known if known else fallback
-            self._populate_server_versions(initial)
-            # Fetch de la API de Purpur
-            def fetch():
-                try:
-                    data = http_get_json("https://api.purpurmc.org/v2/purpur/", timeout=10)
-                    versions = list(reversed(data.get("versions", [])))
-                    QTimer.singleShot(0, lambda: self._populate_server_versions(versions + known))
-                except Exception as e:
-                    print(f"Error cargando versiones Purpur: {e}")
-            threading.Thread(target=fetch, daemon=True).start()
+        def restore_button():
+            self.btn_refresh_server.setEnabled(True)
+            self.btn_refresh_server.setText("🔄")
 
-        else:  # Vanilla
-            # Versiones de Vanilla desde el manifiesto de Mojang
-            def fetch():
-                try:
-                    data = http_get_json("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json", timeout=15)
-                    versions = [v["id"] for v in data.get("versions", []) if v["type"] == "release"]
-                    QTimer.singleShot(0, lambda: self._populate_server_versions(versions))
-                except Exception as e:
-                    print(f"Error cargando versiones Vanilla: {e}")
-                    QTimer.singleShot(0, lambda: self._populate_server_versions(["1.21.4", "1.20.6", "1.19.4", "1.18.2", "1.16.5", "1.12.2"]))
-            threading.Thread(target=fetch, daemon=True).start()
+        # Llamar al fetch (ya guarda la caché y emite la señal al terminar)
+        self._fetch_server_versions_async(server_type)
+
+        # Restaurar el botón en 3 segundos (tiempo razonable para que responda la API)
+        QTimer.singleShot(3000, restore_button)
+
+    def _on_versiones_servidor_recibidas(self, server_type: str, versiones: list):
+        """Slot que se ejecuta en el hilo principal cuando el fetch termina."""
+        # Solo actualizar si el tipo que llega es el que está seleccionado ahora
+        if self.server_type_combo.currentText() == server_type:
+            self._populate_server_versions(versiones)
 
     def get_current_server_dir(self):
         """Devuelve server/purpur o server/vanilla según el tipo seleccionado."""
@@ -2078,24 +2342,11 @@ class TerrarianosLauncher(QMainWindow):
     # ============================================================
     # VERSIONES DEL SERVIDOR
     # ============================================================
-    def load_server_versions(self):
-        known = self.settings.get("known_server_versions", [])
-        fallback = ["1.21.11", "1.21.10", "1.21.8", "1.21.4", "1.20.6"]
-        initial = known if known else fallback
-        self._populate_server_versions(initial)
-
-        def fetch():
-            try:
-                data = http_get_json("https://api.purpurmc.org/v2/purpur/", timeout=10)
-                versions = list(reversed(data.get("versions", [])))
-                QTimer.singleShot(0, lambda: self._populate_server_versions(versions + known))
-            except Exception as e:
-                print(f"Error cargando versiones Purpur: {e}")
-
-        threading.Thread(target=fetch, daemon=True).start()
-
     def _populate_server_versions(self, versions):
+        # Guardar lo que había antes (para intentar mantenerlo)
         current = self.server_version_combo.currentText().strip()
+
+        # Quitar duplicados manteniendo orden
         seen = set()
         unique = []
         for v in versions:
@@ -2103,17 +2354,30 @@ class TerrarianosLauncher(QMainWindow):
                 seen.add(v)
                 unique.append(v)
 
+        # Bloquear señales mientras manipulamos el combo
         self.server_version_combo.blockSignals(True)
         self.server_version_combo.clear()
-        self.server_version_combo.addItems(unique)
+        if unique:
+            self.server_version_combo.addItems(unique)
         self.server_version_combo.blockSignals(False)
 
-        target = current or self.settings.get("server_version") or ""
-        if target and target in unique:
-            self.server_version_combo.setCurrentText(target)
-        elif target:
-            self.server_version_combo.setEditText(target)
+        # Decidir qué versión seleccionar:
+        # 1. La que estaba, si sigue existiendo en la nueva lista
+        # 2. La guardada en settings, si sigue existiendo
+        # 3. La primera de la lista
+        # 4. Nada (si la lista está vacía)
+        target = ""
+        for c in (current, self.settings.get("server_version", "")):
+            if c and c in unique:
+                target = c
+                break
 
+        if target:
+            self.server_version_combo.setCurrentIndex(unique.index(target))
+        elif unique:
+            self.server_version_combo.setCurrentIndex(0)
+
+        # Refrescar el estado del botón (pero sin disparar más señales)
         self.refresh_server_tab()
 
     def on_server_version_changed(self, text):
@@ -2161,6 +2425,7 @@ class TerrarianosLauncher(QMainWindow):
 
         v = self.server_version_combo.currentText().strip()
         server_type = self.server_type_combo.currentText()
+        online_mode = self.settings.get("online_mode", "")
 
         if not v:
             self.server_main_button.setText("⬇ INSTALAR SERVIDOR")
@@ -2170,11 +2435,18 @@ class TerrarianosLauncher(QMainWindow):
 
         if self.is_server_installed():
             self.server_main_button.setText("▶ ARRANCAR SERVIDOR")
-            self.server_main_button.setEnabled(True)
-            java_ver = get_required_java(v)
-            self.server_status.setText(
-                f"✅ Servidor {server_type} {v} listo (Java {java_ver})"
-            )
+
+            if online_mode in ("True", "False"):
+                self.server_main_button.setEnabled(True)
+                java_ver = get_required_java(v)
+                self.server_status.setText(
+                    f"✅ Servidor {server_type} {v} listo (Java {java_ver})"
+                )
+            else:
+                self.server_main_button.setEnabled(False)
+                self.server_status.setText(
+                    "⚠️ Elige el modo (Premium / No-Premium) para poder arrancar"
+                )
         else:
             self.server_main_button.setText("⬇ INSTALAR SERVIDOR")
             self.server_main_button.setEnabled(True)
@@ -2264,7 +2536,7 @@ class TerrarianosLauncher(QMainWindow):
         if success:
             self.append_server_log("✅ Java listo. Continuando con el servidor...\n")
             self.server_progress.setValue(0)
-            self._download_purpur(server_version)
+            self._download_server(server_version)
         else:
             self.server_progress.setValue(0)
             self.server_main_button.setEnabled(True)
@@ -2289,7 +2561,6 @@ class TerrarianosLauncher(QMainWindow):
         self.server_download_thread.log_message.connect(self.append_server_log)
         self.server_download_thread.finished.connect(self.on_server_download_finished)
         self.server_download_thread.start()
-        pass
 
     def _download_vanilla(self, v):
         """Descarga el servidor Vanilla con QThread (señales correctas)."""
@@ -2357,6 +2628,44 @@ class TerrarianosLauncher(QMainWindow):
         self._actually_start_server(java_path, required_java)
 
     def _actually_start_server(self, java_path: str, java_ver: str):
+        # ─── Comprobar que se ha elegido online-mode ───
+        online_mode = self.settings.get("online_mode", "")
+        if online_mode not in ("True", "False"):
+            QMessageBox.warning(
+                self, "Falta elegir online-mode",
+                "⚠️ Antes de arrancar el servidor debes elegir el modo:\n\n"
+                "   • Premium  → solo jugadores con cuenta oficial\n"
+                "   • No-Premium → cualquiera puede entrar\n\n"
+                "Pulsa el botón ❓ para más información."
+            )
+            return
+
+        # ─── Aplicar API Key de MineSkin al config.yml si existe ───
+        if self.settings.get("mineskin_api_key"):
+            self.apply_mineskin_key_to_config()
+
+        # ─── Actualizar server.properties con online-mode ───
+        online = "true" if online_mode == "True" else "false"
+        props_path = os.path.join(self.get_current_server_dir(), "server.properties")
+        try:
+            if os.path.exists(props_path):
+                with open(props_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                new_lines = []
+                found = False
+                for line in lines:
+                    if line.strip().startswith("online-mode="):
+                        new_lines.append(f"online-mode={online}\n")
+                        found = True
+                    else:
+                        new_lines.append(line)
+                if not found:
+                    new_lines.append(f"online-mode={online}\n")
+                with open(props_path, "w", encoding="utf-8") as f:
+                    f.writelines(new_lines)
+        except Exception as e:
+            print(f"[Properties] Error actualizando online-mode: {e}")
+
         jar_name = os.path.basename(self.get_server_jar_path())
         ram = self.settings.get("server_ram", 4)
         xms = min(ram, 4)
@@ -2406,15 +2715,45 @@ class TerrarianosLauncher(QMainWindow):
             self.refresh_server_tab()
             self._update_music_state()
 
-    def _kill_process_tree(self, process):
-        """Mata el proceso y todos sus hijos (Windows usa taskkill /T)."""
+    def _kill_process_tree(self, process, graceful_first: bool = True):
+        """
+        Mata el proceso y todos sus hijos.
+        
+        En Windows:
+          1. Si graceful_first=True, intenta 'taskkill /PID <pid> /T' (sin /F)
+             que pide cierre ordenado pero no fuerza.
+          2. Espera 3 segundos.
+          3. Si el proceso sigue vivo, usa 'taskkill /F /T' (hard kill).
+        
+        En Linux/Mac:
+          1. Envía SIGTERM.
+          2. Espera 3 segundos.
+          3. Si sigue vivo, envía SIGKILL.
+        """
         if process is None:
             return
         if process.poll() is not None:
             return
+
         try:
             if os.name == "nt":
-                # /T mata árbol completo, /F fuerza, /PID el proceso
+                # --- Intento 1: cierre ordenado ---
+                if graceful_first:
+                    subprocess.call(
+                        ["taskkill", "/PID", str(process.pid), "/T"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                    # Esperar hasta 3 segundos a que muera
+                    try:
+                        process.wait(timeout=3)
+                        print(f"[Kill] Proceso {process.pid} cerrado ordenadamente.")
+                        return
+                    except subprocess.TimeoutExpired:
+                        print(f"[Kill] Timeout esperando cierre ordenado. Forzando...")
+
+                # --- Intento 2: hard kill ---
                 subprocess.call(
                     ["taskkill", "/F", "/T", "/PID", str(process.pid)],
                     stdout=subprocess.DEVNULL,
@@ -2422,9 +2761,18 @@ class TerrarianosLauncher(QMainWindow):
                     creationflags=subprocess.CREATE_NO_WINDOW,
                 )
             else:
-                process.kill()
+                # --- Linux/Mac ---
+                if graceful_first:
+                    process.terminate()  # SIGTERM
+                    try:
+                        process.wait(timeout=3)
+                        print(f"[Kill] Proceso {process.pid} cerrado con SIGTERM.")
+                        return
+                    except subprocess.TimeoutExpired:
+                        print(f"[Kill] Timeout con SIGTERM. Enviando SIGKILL...")
+                process.kill()  # SIGKILL
         except Exception as e:
-            print(f"Error matando proceso: {e}")
+            print(f"[Kill] Error matando proceso: {e}")
         finally:
             try:
                 process.wait(timeout=5)
@@ -2448,19 +2796,22 @@ class TerrarianosLauncher(QMainWindow):
         self.server_main_button.setEnabled(False)
         self.server_status.setText("⏳ Deteniendo servidor...")
 
+        # 1. Enviar 'stop' por stdin (cierre limpio)
         try:
             if self.server_process.stdin:
                 self.server_process.stdin.write("stop\n")
                 self.server_process.stdin.flush()
+                self.append_server_log("[Launcher] Enviado comando 'stop'. Esperando guardado...")
         except Exception as e:
             print(f"Error enviando stop: {e}")
 
+        # 2. Esperar 30s. Si no muere, forzar
         def force_kill():
             if self.server_process and self.server_process.poll() is None:
-                self.append_server_log("[Launcher] Forzando cierre del servidor...")
-                self._kill_process_tree(self.server_process)
+                self.append_server_log("[Launcher] El servidor no respondió. Forzando cierre...")
+                self._kill_process_tree(self.server_process, graceful_first=True)
 
-        QTimer.singleShot(15000, force_kill)  # 15s en vez de 20s
+        QTimer.singleShot(30000, force_kill)  # 30s
 
     def on_server_ended(self, exit_code):
         self.server_running = False
@@ -2886,7 +3237,7 @@ class TerrarianosLauncher(QMainWindow):
         self.skin_preview_back.setPixmap(QPixmap())
         self.skin_preview_back.setText("⏳ Cargando...")
 
-                # Descargar en thread
+        # Descargar en thread
         thread = SkinFetchThread(skin["url"])
         thread.fetched.connect(self._on_skin_downloaded_for_preview)
         self._preview_threads.append(thread)
@@ -2895,13 +3246,6 @@ class TerrarianosLauncher(QMainWindow):
             if t in self._preview_threads else None
         )
         thread.start()
-
-    def paste_url_from_clipboard(self):
-        """Pega el contenido del portapapeles en el campo de URL."""
-        text = QApplication.clipboard().text().strip()
-        if text:
-            self.skin_url_input.setText(text)
-            self.skin_url_input.setFocus()
 
     def save_mineskin_key(self):
         """Guarda la API Key de MineSkin en settings.json y la aplica al config.yml si existe."""
@@ -3250,7 +3594,7 @@ class TerrarianosLauncher(QMainWindow):
         reply = QMessageBox.question(
             self, "Eliminar skin",
             f"¿Quieres quitar esta skin de la lista?\n\n{skin['url']}\n\n"
-            "Solo se elimina de tu lista local. El archivo en Catbox sigue ahí.",
+            "Solo se elimina de tu lista local. El archivo en Imgur sigue ahí.",
             QMessageBox.Yes | QMessageBox.No
         )
         if reply != QMessageBox.Yes:
@@ -3294,12 +3638,12 @@ class TerrarianosLauncher(QMainWindow):
         self.plugin_path_input.setVisible(True)
         row.addWidget(self.plugin_path_input, stretch=2)
 
-        btn_browse = QPushButton("📁")
-        btn_browse.setObjectName("copy_button")
-        btn_browse.setToolTip("Seleccionar archivo .jar")
-        btn_browse.clicked.connect(self.browse_plugin_file)
-        btn_browse.setVisible(True)
-        row.addWidget(btn_browse)
+        self.btn_browse_plugin = QPushButton("📁")
+        self.btn_browse_plugin.setObjectName("copy_button")
+        self.btn_browse_plugin.setToolTip("Seleccionar archivo .jar")
+        self.btn_browse_plugin.clicked.connect(self.browse_plugin_file)
+        self.btn_browse_plugin.setVisible(True)
+        row.addWidget(self.btn_browse_plugin)
 
         btn_add = QPushButton("➕ Añadir")
         btn_add.setObjectName("refresh_button")
@@ -3376,10 +3720,7 @@ class TerrarianosLauncher(QMainWindow):
             "Ruta del archivo .jar" if is_file else "https://ejemplo.com/plugin.jar"
         )
         # El botón de examinar solo se muestra para archivos
-        for i in range(self.plugin_path_input.parent().layout().count()):
-            w = self.plugin_path_input.parent().layout().itemAt(i).widget()
-            if isinstance(w, QPushButton) and w.text() == "📁":
-                w.setVisible(is_file)
+        self.btn_browse_plugin.setVisible(is_file)
 
     def browse_plugin_file(self):
         """Abre un diálogo para seleccionar un archivo .jar."""
@@ -3769,18 +4110,6 @@ class TerrarianosLauncher(QMainWindow):
         scroll.setWidget(container)
         outer.addWidget(scroll)
 
-    def _info_row(self, grid, row, label, value):
-        """Añade una fila label: valor al grid."""
-        lbl = QLabel(label)
-        lbl.setObjectName("field_label")
-        grid.addWidget(lbl, row, 0)
-
-        val = QLabel(value)
-        val.setStyleSheet("color: #e0e0e0; font-size: 13px;")
-        val.setWordWrap(True)
-        val.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        grid.addWidget(val, row, 1)
-
     def copy_launcher_info(self):
         """Copia la info del launcher al portapapeles."""
         info = (
@@ -3818,7 +4147,7 @@ class TerrarianosLauncher(QMainWindow):
 
     def open_github_link(self):
         """Abre el repositorio del proyecto en el navegador."""
-        url = "https://github.com/MasterHok/TERRACRAFT-PROYECT.git"  # ← cambia por tu URL real
+        url = "https://github.com/MasterHok/TERRACRAFT-PROYECT"  # ← cambia por tu URL real
         QDesktopServices.openUrl(QUrl(url))
 
     def open_discord_link(self, event):
@@ -3903,28 +4232,87 @@ class TerrarianosLauncher(QMainWindow):
     # CLIENTE (lógica)
     # ============================================================
     def load_versions(self):
-        try:
-            versions = self.get_available_versions()
-            self.version_combo.clear()
-            self.version_combo.addItems(versions)
-            if self.settings["version"] in versions:
-                self.version_combo.setCurrentText(self.settings["version"])
-            else:
-                self.version_combo.setCurrentText(versions[0] if versions else "1.21.4")
-        except Exception as e:
-            print(f"Error cargando versiones: {e}")
-            self.version_combo.addItems(["1.21.4", "1.21.3", "1.20.6"])
-            self.version_combo.setCurrentText("1.21.4")
+        """Carga versiones del cliente desde caché al instante y refresca en segundo plano."""
+        # 1) Mostrar lo que tengamos YA
+        versiones_cache, _ = self._load_versions_cache("cliente")
+        if versiones_cache:
+            versiones = versiones_cache
+        else:
+            versiones = CLIENT_FALLBACK
 
-    def get_available_versions(self) -> List[str]:
-        try:
-            versions = minecraft_launcher_lib.utils.get_available_versions(self.minecraft_dir)
-            version_list = [v["id"] for v in versions if v["type"] == "release"]
-            if version_list:
-                return version_list[:20]
-        except Exception as e:
-            print(f"Error obteniendo versiones: {e}")
-        return ["1.21.4", "1.21.3", "1.20.6", "1.20.4"]
+        self.version_combo.blockSignals(True)
+        self.version_combo.clear()
+        self.version_combo.addItems(versiones)
+        self.version_combo.blockSignals(False)
+
+        # Seleccionar la guardada
+        target = self.settings.get("version", "")
+        if target and target in versiones:
+            self.version_combo.setCurrentIndex(versiones.index(target))
+        elif versiones:
+            self.version_combo.setCurrentIndex(0)
+
+        # 2) Refrescar en segundo plano si toca
+        if not self._cache_is_fresh("cliente"):
+            self._fetch_client_versions_async()
+
+    def _fetch_client_versions_async(self):
+        """Consulta el manifiesto de Mojang en segundo plano."""
+        def worker():
+            try:
+                data = http_get_json(
+                    "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
+                    timeout=15,
+                )
+                versiones = [
+                    v["id"] for v in data.get("versions", [])
+                    if v.get("type") == "release"
+                ]
+                if versiones:
+                    self._save_versions_cache("cliente", versiones)
+                    self.versiones_cliente_listas.emit(versiones)
+            except Exception as e:
+                print(f"[Fetch] Error consultando versiones cliente: {e}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_versiones_cliente_recibidas(self, versiones: list):
+        """Slot cuando llegan las versiones del cliente."""
+        if not versiones:
+            return
+
+        # Guardar lo que había seleccionado
+        current = self.version_combo.currentText().strip()
+
+        self.version_combo.blockSignals(True)
+        self.version_combo.clear()
+        self.version_combo.addItems(versiones)
+        self.version_combo.blockSignals(False)
+
+        # Intentar mantener la selección
+        if current and current in versiones:
+            self.version_combo.setCurrentIndex(versiones.index(current))
+        else:
+            target = self.settings.get("version", "")
+            if target and target in versiones:
+                self.version_combo.setCurrentIndex(versiones.index(target))
+            elif versiones:
+                self.version_combo.setCurrentIndex(0)
+
+        self.check_version_installed()
+
+    def force_refresh_client_versions(self):
+        """Fuerza la consulta al manifiesto de Mojang."""
+        self.btn_refresh_client.setEnabled(False)
+        self.btn_refresh_client.setText("⏳")
+        self.client_status.setText("🔄 Buscando versiones de Minecraft...")
+
+        def restore_button():
+            self.btn_refresh_client.setEnabled(True)
+            self.btn_refresh_client.setText("🔄")
+
+        self._fetch_client_versions_async()
+        QTimer.singleShot(3000, restore_button)   
 
     def check_version_installed(self):
         version = self.version_combo.currentText()
