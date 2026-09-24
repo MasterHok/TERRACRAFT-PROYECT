@@ -15,7 +15,11 @@ from PySide6.QtWidgets import (
     QGridLayout, QLabel, QLineEdit, QComboBox, QPushButton,
     QProgressBar, QFrame, QSlider, QTabWidget, QPlainTextEdit,
     QMessageBox, QFileDialog, QScrollArea, QSizePolicy,
-    QListWidget, QListWidgetItem
+    QListWidget, QListWidgetItem, QDialog  # ← añadido QDialog
+)
+from PySide6.QtMultimedia import (
+    QMediaPlayer, QAudioOutput,
+    QSoundEffect  # ← añadido
 )
 from PySide6.QtCore import (
     Qt, QThread, Signal, QUrl, QObject, QTimer,
@@ -35,7 +39,7 @@ import minecraft_launcher_lib
 # ============================================================
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 LAUNCHER_NAME = "TERRARIANOS LAUNCHER"
-LAUNCHER_VERSION = "3.0"
+LAUNCHER_VERSION = "3.1"
 LAUNCHER_AUTHOR = "Sailor_Rei_Zora_Covennant_Cock_Master_64."
 
 # Tabla Java ↔ Minecraft (según la wiki oficial)
@@ -304,23 +308,7 @@ class ServerDownloadThread(QThread):
                     f.write("allow-flight=true\n")
                     f.write("view-distance=16\n")
                     f.write("max-players=20\n")
-                    f.write("enforce-secure-profile=false\n")
-
-            skins_dir = os.path.join(self.server_dir, "purpur", "plugins", "SkinsRestorer")
-            config_path = os.path.join(skins_dir, "config.yml")
-
-            os.makedirs(skins_dir, exist_ok=True)
-
-            if os.path.exists(config_path):
-                with open(config_path, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-
-                with open(config_path, "w", encoding="utf-8") as f:
-                    for line in lines:
-                        if "mineskinAPIKey:" in line:
-                            f.write("                                mineskinAPIKey: msk_vgnPuerc_Az4QRgIAkvFa1ZF_unAPTdez1Az3w_XtHyUkGyRdNcfbY7x3XbQ9H3Bm_qhPY89E\n")
-                        else:
-                            f.write(line)       
+                    f.write("enforce-secure-profile=false\n")     
 
             vainilla_dir = os.path.join(self.server_dir, "vainilla")
             os.makedirs(vainilla_dir, exist_ok=True)
@@ -854,6 +842,256 @@ class BackgroundMusic(QObject):
 
 
 # ============================================================
+# DIÁLOGO DE BIENVENIDA CON GIF + SONIDOS
+# ============================================================
+class FirstRunDialog(QDialog):
+    """Aviso único al primer arranque con fondo GIF y sonidos en botones."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Bienvenido a TERRACRAFT")
+        self.setModal(True)
+        self.setMinimumSize(620, 620)
+        self.resultado = False  # True = aceptó, False = rechazó
+
+        # --- Layout principal ---
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # --- Fondo animado (GIF) ---
+        self.fondo = AnimatedBackgroundDialog(self)
+        layout.addWidget(self.fondo, stretch=1)
+
+        # --- Layout interno dentro del fondo ---
+        inner = QVBoxLayout(self.fondo)
+        inner.setContentsMargins(30, 30, 30, 30)
+        inner.setSpacing(16)
+
+        # --- Título ---
+        titulo = QLabel("¡Bienvenido a TERRARIANOS LAUNCHER!")
+        titulo.setAlignment(Qt.AlignCenter)
+        titulo.setStyleSheet(
+            "color: #00d4ff; font-size: 22px; font-weight: bold; "
+            "background: rgba(10, 10, 26, 0.8); "
+            "border-radius: 8px; padding: 12px;"
+        )
+        inner.addWidget(titulo)
+
+        # --- Cuerpo del texto ---
+        cuerpo = QLabel(
+            "<div style='text-align: center;'>"
+            "<p style='margin: 0 0 14px 0;'>"
+            "Antes de empezar, este launcher realizará descargas automáticas "
+            "desde Internet cuando tú se lo pidas."
+            "</p>"
+
+            "<p style='color: #00d4ff; font-weight: bold; margin: 12px 0 4px 0;'>"
+            "📦 ¿Qué se descarga?"
+            "</p>"
+            "<p style='margin: 0;'>"
+            "• <b>Cliente de Minecraft</b> — CDN oficial de Mojang<br>"
+            "• <b>Servidores</b> — Purpur o Vanilla<br>"
+            "• <b>Java portable</b> — desde Adoptium<br>"
+            "• <b>Plugins</b> — Geyser, Floodgate, SkinsRestorer<br>"
+            "• <b>Plugins Spigot</b> — los que tú añadas"
+            "</p>"
+
+            "<p style='color: #00d4ff; font-weight: bold; margin: 12px 0 4px 0;'>"
+            "🌐 Orígenes"
+            "</p>"
+            "<p style='margin: 0;'>"
+            "mojang.com · piston-meta.mojang.com<br>"
+            "api.purpurmc.org · api.adoptium.net<br>"
+            "download.geysermc.org<br>"
+            "cdn.modrinth.com · github.com"
+            "</p>"
+
+            "<p style='color: #00d4ff; font-weight: bold; margin: 12px 0 4px 0;'>"
+            "🔒 Privacidad"
+            "</p>"
+            "<p style='margin: 0 0 10px 0;'>"
+            "No se envían datos personales a ningún servidor. "
+            "Todas las descargas son desde las URLs oficiales."
+            "</p>"
+
+            "<p style='color: #7fff7f; font-weight: bold; margin: 14px 0 0 0;'>"
+            "¿Aceptas que el launcher descargue archivos desde Internet?"
+            "</p>"
+            "</div>"
+        )
+        cuerpo.setWordWrap(True)
+        cuerpo.setStyleSheet(
+            "color: #e0e0e0; font-size: 13px; line-height: 160%; "
+            "background: rgba(10, 10, 26, 0.85); "
+            "border-radius: 8px; padding: 16px;"
+        )
+        inner.addWidget(cuerpo, stretch=1)
+
+        # --- Botones ---
+        botones_row = QHBoxLayout()
+        botones_row.setSpacing(20)
+        botones_row.addStretch()
+
+        self.btn_si = QPushButton("✔  Sí, acepto")
+        self.btn_si.setObjectName("dialog_yes")
+        self.btn_si.setFixedHeight(44)
+        self.btn_si.setMinimumWidth(160)
+        self.btn_si.setCursor(Qt.PointingHandCursor)
+        self.btn_si.clicked.connect(self._on_yes)
+        botones_row.addWidget(self.btn_si)
+
+        self.btn_no = QPushButton("✖  No, salir")
+        self.btn_no.setObjectName("dialog_no")
+        self.btn_no.setFixedHeight(44)
+        self.btn_no.setMinimumWidth(160)
+        self.btn_no.setCursor(Qt.PointingHandCursor)
+        self.btn_no.clicked.connect(self._on_no)
+        botones_row.addWidget(self.btn_no)
+
+        botones_row.addStretch()
+        inner.addLayout(botones_row)
+
+        # --- Estilo general ---
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #0a0a1a;
+            }
+            QPushButton#dialog_yes {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #00a8cc, stop:1 #007a99);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 14px;
+                padding: 8px 20px;
+            }
+            QPushButton#dialog_yes:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #00d4ff, stop:1 #00a8cc);
+            }
+            QPushButton#dialog_yes:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #007a99, stop:1 #005a73);
+            }
+            QPushButton#dialog_no {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #c0392b, stop:1 #8b1e1e);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 14px;
+                padding: 8px 20px;
+            }
+            QPushButton#dialog_no:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #e74c3c, stop:1 #c0392b);
+            }
+            QPushButton#dialog_no:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #8b1e1e, stop:1 #5a1010);
+            }
+        """)
+
+        # --- Reproductor de sonido para botones ---
+        self._sound_yes = self._load_sound("click_yes.wav")
+        self._sound_no = self._load_sound("click_no.wav")
+
+    def _load_sound(self, filename):
+        """Carga un sonido desde assets/. Devuelve None si no existe."""
+        path = resource_path(os.path.join("assets", filename))
+        if not os.path.exists(path):
+            return None
+        try:
+            effect = QSoundEffect()
+            effect.setSource(QUrl.fromLocalFile(path))
+            effect.setVolume(1.0)
+            return effect
+        except Exception as e:
+            print(f"[Sound] Error cargando {filename}: {e}")
+            return None
+
+    def _on_yes(self):
+        if self._sound_yes:
+            self._sound_yes.play()
+            # Esperar 250ms para que suene antes de cerrar
+            QTimer.singleShot(2050, self._accept)
+        else:
+            self._accept()
+
+    def _on_no(self):
+        if self._sound_no:
+            self._sound_no.play()
+            QTimer.singleShot(1050, self._reject)
+        else:
+            self._reject()
+
+    def _accept(self):
+        self.resultado = True
+        self.accept()
+
+    def _reject(self):
+        self.resultado = False
+        self.reject()
+
+
+# ============================================================
+# FONDO ANIMADO PARA EL DIÁLOGO
+# ============================================================
+class AnimatedBackgroundDialog(QWidget):
+    """Widget con GIF animado de fondo para el diálogo de bienvenida."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.movie = None
+
+        gif_path = resource_path(os.path.join("assets", "fondo_info.gif"))
+        # Fallback a fondo_info.png si no hay GIF
+        if not os.path.exists(gif_path):
+            gif_path = resource_path(os.path.join("assets", "fondo_info.png"))
+
+        if os.path.exists(gif_path) and gif_path.endswith(".gif"):
+            self.movie = QMovie(gif_path)
+            self.movie.setCacheMode(QMovie.CacheAll)
+            self.movie.setScaledSize(self.size())
+            self.movie.frameChanged.connect(self.update)
+            self.movie.start()
+        self._static_pixmap = None
+        if os.path.exists(gif_path) and not gif_path.endswith(".gif"):
+            self._static_pixmap = QPixmap(gif_path)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+
+        if self.movie and self.movie.currentPixmap():
+            scaled = self.movie.currentPixmap().scaled(
+                self.size(), Qt.KeepAspectRatioByExpanding,
+                Qt.SmoothTransformation
+            )
+            painter.drawPixmap(0, 0, scaled)
+        elif self._static_pixmap and not self._static_pixmap.isNull():
+            scaled = self._static_pixmap.scaled(
+                self.size(), Qt.KeepAspectRatioByExpanding,
+                Qt.SmoothTransformation
+            )
+            painter.drawPixmap(0, 0, scaled)
+        else:
+            gradient = QLinearGradient(0, 0, 0, self.height())
+            gradient.setColorAt(0, QColor(26, 26, 46))
+            gradient.setColorAt(0.5, QColor(22, 33, 62))
+            gradient.setColorAt(1, QColor(15, 52, 96))
+            painter.fillRect(self.rect(), gradient)
+
+        painter.end()
+
+    def resizeEvent(self, event):
+        if self.movie:
+            self.movie.setScaledSize(self.size())
+        super().resizeEvent(event)
+
+# ============================================================
 # LAUNCHER
 # ============================================================
 class TerrarianosLauncher(QMainWindow):
@@ -883,6 +1121,8 @@ class TerrarianosLauncher(QMainWindow):
             "music_volume": 0.3,
             "catbox_userhash": "",
             "my_skins": [],
+            "mineskin_api_key": "",
+            "accepted_downloads": False,
         }
         self.load_settings()
 
@@ -909,14 +1149,43 @@ class TerrarianosLauncher(QMainWindow):
         self._preview_threads = []
 
         self.init_ui()
+
+        # --- Aviso de primer arranque (antes de cualquier descarga) ---
+        if not self.check_first_run():
+            # El usuario rechazó → cerramos el launcher
+            QTimer.singleShot(0, self.close)
+            return
+        
         self.init_background_music()
         self.check_version_installed()
         self.refresh_server_tab()
+
+        QTimer.singleShot(300, self._load_ip_once)
+        QTimer.singleShot(800, self.auto_update_geyser_on_start)
 
         self._migrate_old_server_files()
 
         QTimer.singleShot(300, self._load_ip_once)
         QTimer.singleShot(800, self.auto_update_geyser_on_start)
+
+    def check_first_run(self) -> bool:
+        """
+        Comprueba si es el primer arranque.
+        Si lo es, muestra el aviso y guarda la respuesta.
+        Devuelve True si el usuario acepta (o ya aceptó antes), False si rechaza.
+        """
+        if self.settings.get("accepted_downloads", False):
+            return True  # Ya aceptó antes
+
+        dlg = FirstRunDialog(self)
+        dlg.exec()
+
+        if dlg.resultado:
+            self.settings["accepted_downloads"] = True
+            self.save_settings()
+            return True
+        else:
+            return False
 
     # ---------- SETTINGS ----------
     def _migrate_old_server_files(self):
@@ -1136,10 +1405,39 @@ class TerrarianosLauncher(QMainWindow):
         title_layout.addWidget(title_label)
 
         volume_widget = QWidget()
-        volume_widget.setFixedWidth(240)  # ← sube el ancho para que quepa el Discord
+        volume_widget.setFixedWidth(320)  # ← sube el ancho para que quepa el Discord
         vlayout = QHBoxLayout(volume_widget)
         vlayout.setContentsMargins(0, 0, 0, 0)
-        vlayout.setSpacing(12)
+        vlayout.setSpacing(8)
+
+        # ---- Botón carpeta ----
+        self.folder_button = QPushButton("📁")
+        self.folder_button.setObjectName("folder_button")
+        self.folder_button.setFixedSize(34, 34)
+        self.folder_button.setToolTip("Abrir carpeta del launcher")
+        self.folder_button.clicked.connect(self.open_launcher_folder)
+        vlayout.addWidget(self.folder_button)
+
+        # ---- Botón web ----  ← NUEVO
+        self.web_button = QLabel()
+        self.web_button.setFixedSize(30, 30)
+        self.web_button.setAlignment(Qt.AlignCenter)
+        self.web_button.setToolTip("Visitar nuestro sitio web")
+        self.web_button.setCursor(Qt.PointingHandCursor)
+
+        web_path = resource_path(os.path.join("assets", "web.png"))
+        if os.path.exists(web_path):
+            web_pixmap = QPixmap(web_path)
+            if not web_pixmap.isNull():
+                self.web_button.setPixmap(web_pixmap.scaled(
+                    28, 28, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                ))
+        else:
+            self.web_button.setText("🌐")
+            self.web_button.setStyleSheet("color: #00d4ff; font-size: 20px;")
+
+        self.web_button.mousePressEvent = lambda e: self.open_web_link()
+        vlayout.addWidget(self.web_button)      
 
         # ---- Botón GitHub ----
         self.github_icon_button = QLabel()
@@ -1198,17 +1496,9 @@ class TerrarianosLauncher(QMainWindow):
         self.volume_slider = QSlider(Qt.Horizontal)
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(int(self.settings.get("music_volume", 0.3) * 100))
-        self.volume_slider.setFixedWidth(100)
+        self.volume_slider.setFixedWidth(60)
         self.volume_slider.valueChanged.connect(self.change_volume)
         vlayout.addWidget(self.volume_slider)
-
-        # ---- Botón carpeta ----
-        self.folder_button = QPushButton("📁")
-        self.folder_button.setObjectName("folder_button")
-        self.folder_button.setFixedSize(34, 34)
-        self.folder_button.setToolTip("Abrir carpeta del launcher")
-        self.folder_button.clicked.connect(self.open_launcher_folder)
-        vlayout.addWidget(self.folder_button)
 
         title_layout.addWidget(volume_widget)
         main_layout.addLayout(title_layout)
@@ -2026,6 +2316,10 @@ class TerrarianosLauncher(QMainWindow):
                 self.settings["known_server_versions"] = known
                 self.save_settings()
 
+            # ✅ Aplicar la API Key guardada al nuevo config.yml
+            if self.settings.get("mineskin_api_key"):
+                self.apply_mineskin_key_to_config()
+
             self.server_progress.setValue(100)
             self.append_server_log("\n✅ Instalación completada.")
             self._update_java_info_label(v)
@@ -2368,31 +2662,79 @@ class TerrarianosLauncher(QMainWindow):
         header.setStyleSheet("color: #a8d8ea; padding: 2px; font-size: 12px;")
         layout.addWidget(header)
 
-        # ---- Panel de añadir URL ----
-        panel_up, content_up = self.make_panel("🔗 Añadir skin desde URL")
+        # ---- Panel de añadir URL + API Key ----
+        panel_up, content_up = self.make_panel("🎨 Añadir skin + Configuración MineSkin")
+
+        top_grid = QGridLayout()
+        top_grid.setSpacing(10)
+        top_grid.setColumnStretch(1, 1)
+        top_grid.setColumnStretch(3, 1)
+
+        # --- Columna izquierda: URL de skin ---
+        url_lbl = QLabel("🌐 URL de la skin (Imgur):")
+        url_lbl.setObjectName("field_label")
+        top_grid.addWidget(url_lbl, 0, 0)
 
         url_row = QHBoxLayout()
-        url_row.setSpacing(8)
+        url_row.setSpacing(6)
 
         self.skin_url_input = QLineEdit()
-        self.skin_url_input.setPlaceholderText("https://ejemplo.com/skin.png")
+        self.skin_url_input.setPlaceholderText("https://i.imgur.com/xxxxx.png")
         self.skin_url_input.returnPressed.connect(self.add_skin_from_url)
         url_row.addWidget(self.skin_url_input, stretch=1)
 
-        btn_paste = QPushButton("📋")
-        btn_paste.setObjectName("copy_button")
-        btn_paste.setToolTip("Pegar desde el portapapeles")
-        btn_paste.clicked.connect(self.paste_url_from_clipboard)
-        url_row.addWidget(btn_paste)
+        btn_save_url = QPushButton("💾")
+        btn_save_url.setObjectName("copy_button")
+        btn_save_url.setToolTip("Añadir skin")
+        btn_save_url.clicked.connect(self.add_skin_from_url)
+        url_row.addWidget(btn_save_url)
 
-        btn_add = QPushButton("➕ Añadir")
-        btn_add.setObjectName("refresh_button")
-        btn_add.clicked.connect(self.add_skin_from_url)
-        url_row.addWidget(btn_add)
+        btn_help_url = QPushButton("❓")
+        btn_help_url.setObjectName("copy_button")
+        btn_help_url.setToolTip("¿Cómo subir una skin a Imgur?")
+        btn_help_url.clicked.connect(self.show_imgur_help)
+        url_row.addWidget(btn_help_url)
 
-        content_up.addLayout(url_row)
+        top_grid.addLayout(url_row, 0, 1)
 
-        self.skin_url_status = QLabel("Pega una URL directa a un PNG de skin (64×64 o 64×32).")
+        # --- Columna derecha: API Key de MineSkin ---
+        api_lbl = QLabel("🔑 MineSkin API Key:")
+        api_lbl.setObjectName("field_label")
+        top_grid.addWidget(api_lbl, 0, 2)
+
+        api_row = QHBoxLayout()
+        api_row.setSpacing(6)
+
+        self.mineskin_input = QLineEdit()
+        self.mineskin_input.setEchoMode(QLineEdit.Password)
+        self.mineskin_input.setPlaceholderText("msk_...")
+        self.mineskin_input.setText(self.settings.get("mineskin_api_key", ""))
+        self.mineskin_input.setToolTip(
+            "Obtén tu propia API Key gratuita en https://mineskin.org/apikey"
+        )
+        api_row.addWidget(self.mineskin_input, stretch=1)
+
+        btn_save_key = QPushButton("💾")
+        btn_save_key.setObjectName("copy_button")
+        btn_save_key.setToolTip("Guardar API Key")
+        btn_save_key.clicked.connect(self.save_mineskin_key)
+        api_row.addWidget(btn_save_key)
+
+        btn_help_key = QPushButton("❓")
+        btn_help_key.setObjectName("copy_button")
+        btn_help_key.setToolTip("¿Cómo obtener una API Key de MineSkin?")
+        btn_help_key.clicked.connect(self.show_mineskin_help)
+        api_row.addWidget(btn_help_key)
+
+        top_grid.addLayout(api_row, 0, 3)
+
+        content_up.addLayout(top_grid)
+
+        # Nota de estado
+        self.skin_url_status = QLabel(
+            "Pega el enlace directo a la imagen de Imgur. "
+            "Si no termina en .png, no es un enlace valido."
+        )
         self.skin_url_status.setObjectName("ram_note")
         self.skin_url_status.setWordWrap(True)
         content_up.addWidget(self.skin_url_status)
@@ -2425,7 +2767,7 @@ class TerrarianosLauncher(QMainWindow):
         front_col.addWidget(front_lbl)
 
         self.skin_preview_front = QLabel("Sin skin")
-        self.skin_preview_front.setFixedSize(155, 155)
+        self.skin_preview_front.setFixedSize(165, 165)
         self.skin_preview_front.setAlignment(Qt.AlignCenter)
         self.skin_preview_front.setStyleSheet(
             "background: rgba(0,0,0,0.4); border-radius: 8px; "
@@ -2442,7 +2784,7 @@ class TerrarianosLauncher(QMainWindow):
         back_col.addWidget(back_lbl)
 
         self.skin_preview_back = QLabel("Sin skin")
-        self.skin_preview_back.setFixedSize(155, 155)
+        self.skin_preview_back.setFixedSize(165, 165)
         self.skin_preview_back.setAlignment(Qt.AlignCenter)
         self.skin_preview_back.setStyleSheet(
             "background: rgba(0,0,0,0.4); border-radius: 8px; "
@@ -2560,6 +2902,165 @@ class TerrarianosLauncher(QMainWindow):
         if text:
             self.skin_url_input.setText(text)
             self.skin_url_input.setFocus()
+
+    def save_mineskin_key(self):
+        """Guarda la API Key de MineSkin en settings.json y la aplica al config.yml si existe."""
+        key = self.mineskin_input.text().strip()
+
+        # --- Caso 1: campo vacío = quitar la key ---
+        if not key:
+            self.settings["mineskin_api_key"] = ""
+            self.save_settings()
+
+            if self.apply_mineskin_key_to_config():
+                self.skin_url_status.setText("✅ API Key eliminada. Reinicia el servidor.")
+                self.skin_url_status.setStyleSheet("color: #7fff7f; font-weight: bold;")
+                QMessageBox.information(
+                    self, "API Key eliminada",
+                    "✅ Se ha quitado la API Key.\n\n"
+                    "MineSkin usará el plan gratuito.\n\n"
+                    "⚠️ Reinicia el servidor para aplicar el cambio."
+                )
+            else:
+                self.skin_url_status.setText("ℹ️ API Key vacía. Se aplicará al instalar el servidor.")
+                self.skin_url_status.setStyleSheet("color: #a8d8ea; font-weight: bold;")
+            return
+
+        # --- Caso 2: validar el formato ---
+        if not key.startswith("msk_"):
+            QMessageBox.warning(
+                self, "API Key inválida",
+                "Las API Keys de MineSkin empiezan por 'msk_'.\n\n"
+                "Compruébala en: https://mineskin.org/apikey"
+            )
+            return
+
+        if len(key) < 40:
+            QMessageBox.warning(
+                self, "API Key incompleta",
+                "Parece que la API Key está cortada. Cópiala entera."
+            )
+            return
+
+        # --- Caso 3: guardar ---
+        self.settings["mineskin_api_key"] = key
+        self.save_settings()
+
+        if self.apply_mineskin_key_to_config():
+            self.skin_url_status.setText("✅ API Key guardada. Reinicia el servidor.")
+            self.skin_url_status.setStyleSheet("color: #7fff7f; font-weight: bold;")
+            QMessageBox.information(
+                self, "API Key guardada",
+                "✅ API Key de MineSkin guardada y aplicada al servidor.\n\n"
+                "⚠️ Para que surta efecto, debes REINICIAR el servidor:\n"
+                "   1. Pulsa 'DETENER SERVIDOR'\n"
+                "   2. Pulsa 'ARRANCAR SERVIDOR'\n\n"
+                "El servidor leerá la nueva key al iniciar."
+            )
+        else:
+            self.skin_url_status.setText("✅ API Key guardada. Se aplicará al instalar el servidor.")
+            self.skin_url_status.setStyleSheet("color: #7fff7f; font-weight: bold;")
+            QMessageBox.information(
+                self, "API Key guardada",
+                "✅ API Key guardada.\n\n"
+                "El servidor Purpur aún no está instalado, así que la key "
+                "se aplicará automáticamente cuando lo instales."
+            )
+
+    def show_imgur_help(self):
+        """Explica cómo subir una skin a Imgur y obtener el enlace correcto."""
+        QMessageBox.information(
+            self, "Subir una skin a Imgur",
+            "🎨 ¿Cómo subir tu skin a Imgur?\n\n"
+            "1. Entra en: https://imgur.com/upload\n"
+            "2. Sube tu imagen PNG de la skin (64×64 píxeles)\n"
+            "3. Cuando termine la subida, verás la imagen en pantalla\n"
+            "4. Haz CLIC DERECHO sobre la imagen\n"
+            "5. Elige 'Copiar dirección de imagen'\n"
+            "   (o 'Copy image address' si tu navegador está en inglés)\n"
+            "6. Pega ese enlace aquí y pulsa 💾\n\n"
+            "💡 El enlace correcto se ve así:\n"
+            "   https://i.imgur.com/xxxxx.png\n\n"
+            "⚠️ NO uses el enlace de la página (imgur.com/xxxxx).\n"
+            "   Si pegas ese oeldel boton copiar , no funcionara.\n\n"
+            "🌐 Una vez cargue tu skin utiliza el boton del lado \n"
+            "izquierdo del Previsualizador para copiar el comando. \n\n"
+            "En el juego, aplica la skin pegando el comando:\n"
+            "   /skin url \"https://i.imgur.com/xxxxx.png\" \n"
+            "y presiona ENTER \n\n"
+            "ESTO SOLO FUNCIONARA DENTRO DE UN SERVIDOR PURPUR \n"
+            "con el PLUGIN SKINRESTORE."
+        )
+
+    def show_mineskin_help(self):
+        """Explica cómo obtener una API Key de MineSkin."""
+        QMessageBox.information(
+            self, "Obtener API Key de MineSkin",
+            "🔑 ¿Para qué sirve?\n"
+            "La API Key reduce los tiempos de espera al aplicar skins\n"
+            "y sube los límites diarios de conversión.\n\n"
+            "🌐 ¿Cómo obtenerla?\n"
+            "1. Entra en: https://mineskin.org/apikey\n"
+            "2. Inicia sesión con tu cuenta (Discord, Google, etc.)\n"
+            "3. Crea una API Key gratuita (plan Lite) o de pago\n"
+            "4. Copia la clave (empieza por 'msk_')\n"
+            "5. Pégala en el campo de la derecha y pulsa 💾\n\n"
+            "💡 El plan gratuito es más que suficiente para servidores\n"
+            "pequeños de amigos. Si tu servidor crece, considera un plan\n"
+            "de pago para más velocidad y límites."
+        )
+
+    def apply_mineskin_key_to_config(self) -> bool:
+        """Escribe la API Key en el config.yml de SkinsRestorer si existe.
+        Devuelve True si se aplicó, False si el servidor no está instalado aún.
+        """
+        config_path = os.path.join(
+            self.server_dir, "purpur", "plugins", "SkinsRestorer", "config.yml"
+        )
+
+        if not os.path.exists(config_path):
+            print("[MineSkin] config.yml aún no existe. Se aplicará al instalar el servidor.")
+            return False
+
+        key = self.settings.get("mineskin_api_key", "")
+
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+            new_lines = []
+            replaced = False
+            for line in lines:
+                if line.lstrip().startswith("mineskinAPIKey:"):
+                    indent = line[:len(line) - len(line.lstrip())]
+                    safe_key = key.replace("\n", "").replace('"', "")
+                    new_lines.append(f"{indent}mineskinAPIKey: {safe_key}\n")
+                    replaced = True
+                else:
+                    new_lines.append(line)
+
+            # Si no existía la línea, la añadimos tras 'api:'
+            if not replaced:
+                final_lines = []
+                inserted = False
+                for line in new_lines:
+                    final_lines.append(line)
+                    if not inserted and line.strip() == "api:":
+                        final_lines.append(f"    mineskinAPIKey: {key}\n")
+                        inserted = True
+                new_lines = final_lines
+                if not inserted:
+                    new_lines.append(f"\napi:\n    mineskinAPIKey: {key}\n")
+
+            with open(config_path, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+
+            print("[MineSkin] API Key aplicada al config.yml")
+            return True
+
+        except Exception as e:
+            print(f"[MineSkin] Error aplicando API Key: {e}")
+            return False
 
     def add_skin_from_url(self):
         """Valida la URL pegada y añade la skin a la lista."""
@@ -2703,7 +3204,7 @@ class TerrarianosLauncher(QMainWindow):
             pixmap.loadFromData(buffer.getvalue())
             if not pixmap.isNull():
                 label.setPixmap(pixmap.scaled(
-                    130, 130, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                    160, 160, Qt.KeepAspectRatio, Qt.SmoothTransformation
                 ))
             else:
                 label.setText("🖼️")
@@ -3310,9 +3811,14 @@ class TerrarianosLauncher(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Error", f"No se pudo abrir la carpeta:\n{e}")
 
+    def open_web_link(self):
+        """Abre tu sitio web en el navegador."""
+        url = "https://www.terrarianos.uk"  # ← cambia por tu URL real
+        QDesktopServices.openUrl(QUrl(url))
+
     def open_github_link(self):
         """Abre el repositorio del proyecto en el navegador."""
-        url = "https://github.com/TU_USUARIO/TU_REPOSITORIO"  # ← cambia por tu URL real
+        url = "https://github.com/MasterHok/TERRACRAFT-PROYECT.git"  # ← cambia por tu URL real
         QDesktopServices.openUrl(QUrl(url))
 
     def open_discord_link(self, event):
