@@ -343,9 +343,12 @@ echo echo.>> "%BASE%CREAR_UN_EXE.bat"
 echo echo Ejecutable generado en:>> "%BASE%CREAR_UN_EXE.bat"
 echo echo   TERRALAUNCHER\TERRACRAFT.exe>> "%BASE%CREAR_UN_EXE.bat"
 echo echo.>> "%BASE%CREAR_UN_EXE.bat"
-echo echo IMPORTANTE: El .exe debe ir junto a:>> "%BASE%CREAR_UN_EXE.bat"
-echo echo   - assets\    ^(fondo, musica, icono^)>> "%BASE%CREAR_UN_EXE.bat"
-echo echo   - la carpeta del launcher ^(para config\, minecraft\, server\, java\^)>> "%BASE%CREAR_UN_EXE.bat"
+echo echo NOTA: El .exe ya lleva los assets dentro (fondo, musica, iconos).>> "%BASE%CREAR_UN_EXE.bat"
+echo echo Solo necesita una carpeta con permisos de escritura para crear:>> "%BASE%CREAR_UN_EXE.bat"
+echo echo   - config\    ^(ajustes del launcher^)>> "%BASE%CREAR_UN_EXE.bat"
+echo echo   - minecraft\ ^(versiones del cliente^)>> "%BASE%CREAR_UN_EXE.bat"
+echo echo   - server\    ^(servidores Purpur/Vanilla^)>> "%BASE%CREAR_UN_EXE.bat"
+echo echo   - java\      ^(JREs descargados^)>> "%BASE%CREAR_UN_EXE.bat"
 echo echo.>> "%BASE%CREAR_UN_EXE.bat"
 echo pause>> "%BASE%CREAR_UN_EXE.bat"
 echo endlocal>> "%BASE%CREAR_UN_EXE.bat"
@@ -378,6 +381,8 @@ echo Para compilar el .exe:
 echo   CREAR_UN_EXE.bat
 echo.
 echo Recordatorio:
+echo   - El .exe ya lleva los assets dentro. No hace falta
+echo     copiar la carpeta assets\ junto al ejecutable.
 echo   - Java se descarga automaticamente desde el launcher
 echo     cuando instales un servidor.
 echo   - Purpur y Geyser/Floodgate tambien se descargan
