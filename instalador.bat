@@ -15,6 +15,55 @@ echo los plugins los gestiona el propio launcher.
 echo.
 
 :: ============================================================
+:: AVISO DE DESCARGAS
+:: ============================================================
+cls
+echo ============================================================
+echo           AVISO - INSTALADOR TERRACRAFT
+echo ============================================================
+echo.
+echo Este instalador preparara el entorno para el launcher.
+echo.
+echo Se descargara desde Internet:
+echo.
+echo   [1] Python 3.12 (si no lo tienes instalado)
+echo         Origen:  winget / python.org
+echo.
+echo   [2] Dependencias Python (via pip):
+echo         - PySide6                (^~ 100 MB)  Interfaz grafica Qt6
+echo         - minecraft-launcher-lib (^~   1 MB)  Descarga de Minecraft
+echo         - Pillow                 (^~   3 MB)  Procesamiento de imagenes
+echo         - skinpy                 (^~   1 MB)  Render 3D de skins
+echo         - PyInstaller            (^~  10 MB)  Solo si compilas el .exe
+echo         Origen:  pypi.org
+echo.
+echo NO se descarga:
+echo   - Minecraft
+echo   - Java
+echo   - Servidores Purpur o Vanilla
+echo   - Plugins (Geyser, Floodgate, etc.)
+echo.
+echo Todo eso lo gestiona el launcher despues de instalarlo.
+echo.
+echo ------------------------------------------------------------
+echo.
+set /p CONFIRMAR="Aceptas estas descargas? (S/N): "
+
+if /i not "%CONFIRMAR%"=="S" (
+    echo.
+    echo Operacion cancelada por el usuario.
+    echo No se ha descargado ni modificado nada.
+    echo.
+    pause
+    exit /b 0
+)
+
+echo.
+echo OK - Continuando con la instalacion...
+echo.
+timeout /t 1 >nul
+
+:: ============================================================
 :: 0/5 - COMPROBAR TERRACRAFT.py
 :: ============================================================
 if not exist "%BASE%TERRACRAFT.py" (
@@ -41,6 +90,18 @@ where py >nul 2>&1
 if not errorlevel 1 (set "PYTHON=py -3" & goto PythonEncontrado)
 
 echo Python no esta instalado.
+echo.
+echo Se instalara Python 3.12 (~25 MB) desde winget.
+echo.
+set /p CONFIRMAR_PY="Continuar con la instalacion de Python? (S/N): "
+if /i not "%CONFIRMAR_PY%"=="S" (
+    echo.
+    echo Operacion cancelada por el usuario.
+    echo.
+    pause
+    exit /b 0
+)
+
 echo.
 echo Instalando Python 3.12...
 echo.
