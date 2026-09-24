@@ -99,39 +99,6 @@ CREAR_UN_EXE.bat
 
 El ejecutable aparecerá en TERRALAUNCHER/TERRACRAFT.exe.
 
-📁 Estructura del proyecto
-text
-
-TERRACRAFT/
-├── INSTALAR.bat              Instalador automático
-├── TERRACRAFT.py             Código principal del launcher
-├── LANZADOR_PYTHON.bat       (generado) Arranca el launcher
-├── CREAR_UN_EXE.bat          (generado) Compila a .exe
-├── README.md
-├── assets/
-│   ├── banner.png            Banner superior
-│   ├── discord.png           Icono Discord
-│   ├── github.png            Icono GitHub
-│   ├── author.png            Tu foto (pestaña Info)
-│   ├── fondo.gif             Fondo animado
-│   ├── icon.png / icon.ico   Icono del launcher
-│   └── music.mp3             Música de fondo
-├── config/                   (generado) Ajustes del usuario
-│   └── settings.json
-├── minecraft/                (generado) Versiones del cliente
-├── java/                     (generado) Java portable por versión
-│   ├── 17/r/bin/java.exe
-│   ├── 21/r/bin/java.exe
-│   └── 25/r/bin/java.exe
-└── server/
-    ├── purpur/               Servidores Purpur
-    │   ├── purpur-X.jar
-    │   ├── plugins/
-    │   └── world/
-    └── vanilla/              Servidores Vanilla
-        ├── vanilla-X.jar
-        └── world/
-
 🎯 Uso
 Jugar Minecraft
 
