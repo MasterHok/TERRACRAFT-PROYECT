@@ -89,14 +89,14 @@ if not exist "%BASE%TERRACRAFT.py" (
 echo [1/5] Comprobando Python...
 echo.
 
-where python3 >nul 2>&1
-if not errorlevel 1 (set "PYTHON=python3" & goto PythonEncontrado)
-
 where python >nul 2>&1
 if not errorlevel 1 (set "PYTHON=python" & goto PythonEncontrado)
 
 where py >nul 2>&1
 if not errorlevel 1 (set "PYTHON=py -3" & goto PythonEncontrado)
+
+where python3 >nul 2>&1
+if not errorlevel 1 (set "PYTHON=python3" & goto PythonEncontrado)
 
 echo Python no esta instalado.
 echo.
@@ -278,7 +278,7 @@ if exist "%BASE%LANZADOR_PYTHON.bat" del "%BASE%LANZADOR_PYTHON.bat"
 
 echo @echo off>> "%BASE%LANZADOR_PYTHON.bat"
 echo title TERRACRAFT>> "%BASE%LANZADOR_PYTHON.bat"
-echo cd /d "%%%%~dp0">> "%BASE%LANZADOR_PYTHON.bat"
+echo cd /d "%%~dp0">> "%BASE%LANZADOR_PYTHON.bat"
 echo %PYTHON% TERRACRAFT.py>> "%BASE%LANZADOR_PYTHON.bat"
 echo pause>> "%BASE%LANZADOR_PYTHON.bat"
 

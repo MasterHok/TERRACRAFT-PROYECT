@@ -4062,14 +4062,6 @@ class TerrarianosLauncher(QMainWindow):
         panel_thanks, content_thanks = self.make_panel("💖 Para TERRARIANOS:")
 
         thanks_text = QLabel(
-            "Este Grupo me hizo quien soy ahora.\n\n"
-            "MUCHAS GRACIAS AL GRUPO TERRARIANOS , ya que este me dio su confianza de ser "
-            "ADMINISTRADOR y esto me llevo a desarrollar y aprender temas relacionados a "
-            "PROGRAMACION y GRACIAS al ADMINISTRADOR Raven_117 quien fue quien confio en mi "
-            "y me dio el ROL de ADMIN. \n\n"
-            "FINALMENTE GRACIAS a TODOS \n\n"
-            "Lo que FUE, ES y SERA el rumbo del SERVIDOR TERRARIANO es GRACIAS a TODOS,"
-            "tanto en BUENOS como MALOS MOMENTOS \n\n"
             "GRACIAS"
         )
         thanks_text.setWordWrap(True)
