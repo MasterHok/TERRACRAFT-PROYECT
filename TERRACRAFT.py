@@ -104,7 +104,7 @@ JAVA_BY_MC = {
     "1.16": "8", "1.16.1": "8", "1.16.2": "8", "1.16.3": "8", "1.16.4": "8", "1.16.5": "8",
     
     # Minecraft ≥ 1.17 requiere Java 16
-    "1.17": "16", "1.17.1": "16",
+    "1.17": "16", "1.17.1": "17",
     
     # Minecraft ≥ 1.18 requiere Java 17
     "1.18": "17", "1.18.1": "17", "1.18.2": "17",
@@ -2588,8 +2588,7 @@ class TerrarianosLauncher(QMainWindow):
                 self.save_settings()
 
             # ✅ Aplicar la API Key guardada al nuevo config.yml
-            if self.settings.get("mineskin_api_key"):
-                self.apply_mineskin_key_to_config()
+            self.apply_mineskin_key_to_config()
 
             self.server_progress.setValue(100)
             self.append_server_log("\n✅ Instalación completada.")
@@ -2641,8 +2640,7 @@ class TerrarianosLauncher(QMainWindow):
             return
 
         # ─── Aplicar API Key de MineSkin al config.yml si existe ───
-        if self.settings.get("mineskin_api_key"):
-            self.apply_mineskin_key_to_config()
+        self.apply_mineskin_key_to_config()
 
         # ─── Actualizar server.properties con online-mode ───
         online = "true" if online_mode == "True" else "false"
@@ -3355,15 +3353,17 @@ class TerrarianosLauncher(QMainWindow):
         )
 
     def apply_mineskin_key_to_config(self) -> bool:
-        """Escribe la API Key en el config.yml de SkinsRestorer si existe.
-        Devuelve True si se aplicó, False si el servidor no está instalado aún.
+        """Aplica la API Key de MineSkin y desactiva el aviso offlineModeWarning
+        en el config.yml de SkinsRestorer.
+
+        Devuelve True si se aplicó algo, False si el config.yml aún no existe.
         """
         config_path = os.path.join(
             self.server_dir, "purpur", "plugins", "SkinsRestorer", "config.yml"
         )
 
         if not os.path.exists(config_path):
-            print("[MineSkin] config.yml aún no existe. Se aplicará al instalar el servidor.")
+            print("[SkinsRestorer] config.yml aún no existe. Se aplicará al instalar el servidor.")
             return False
 
         key = self.settings.get("mineskin_api_key", "")
@@ -3373,18 +3373,44 @@ class TerrarianosLauncher(QMainWindow):
                 lines = f.readlines()
 
             new_lines = []
-            replaced = False
+            replaced_key = False
+            in_offline_warning = False
+            replaced_warning = False
+
             for line in lines:
-                if line.lstrip().startswith("mineskinAPIKey:"):
-                    indent = line[:len(line) - len(line.lstrip())]
+                stripped = line.lstrip()
+
+                # Detectar bloque offlineModeWarning
+                if stripped.startswith("offlineModeWarning:"):
+                    in_offline_warning = True
+                    new_lines.append(line)
+                    continue
+
+                # Si estamos dentro del bloque, buscar la línea 'enabled:'
+                if in_offline_warning:
+                    # Si la línea tiene menos indentación que 'offlineModeWarning:',
+                    # significa que hemos salido del bloque
+                    if line.strip() and not line.startswith(" ") and not line.startswith("\t"):
+                        in_offline_warning = False
+                    elif stripped.startswith("enabled:"):
+                        # Reemplazar 'enabled: true' por 'enabled: false' manteniendo indentación
+                        indent = line[:len(line) - len(stripped)]
+                        new_lines.append(f"{indent}enabled: false\n")
+                        replaced_warning = True
+                        continue
+
+                # Reemplazar la línea de la API Key
+                if stripped.startswith("mineskinAPIKey:"):
+                    indent = line[:len(line) - len(stripped)]
                     safe_key = key.replace("\n", "").replace('"', "")
                     new_lines.append(f"{indent}mineskinAPIKey: {safe_key}\n")
-                    replaced = True
-                else:
-                    new_lines.append(line)
+                    replaced_key = True
+                    continue
 
-            # Si no existía la línea, la añadimos tras 'api:'
-            if not replaced:
+                new_lines.append(line)
+
+            # Si no había línea de API Key, la añadimos tras 'api:'
+            if not replaced_key:
                 final_lines = []
                 inserted = False
                 for line in new_lines:
@@ -3399,11 +3425,19 @@ class TerrarianosLauncher(QMainWindow):
             with open(config_path, "w", encoding="utf-8") as f:
                 f.writelines(new_lines)
 
-            print("[MineSkin] API Key aplicada al config.yml")
+            msg = "[SkinsRestorer] "
+            if replaced_key:
+                msg += "API Key aplicada. "
+            if replaced_warning:
+                msg += "offlineModeWarning desactivado. "
+            if not replaced_key and not replaced_warning:
+                msg += "No se aplicó ningún cambio (config.yml sin bloques esperados)."
+
+            print(msg)
             return True
 
         except Exception as e:
-            print(f"[MineSkin] Error aplicando API Key: {e}")
+            print(f"[SkinsRestorer] Error aplicando cambios al config.yml: {e}")
             return False
 
     def add_skin_from_url(self):
